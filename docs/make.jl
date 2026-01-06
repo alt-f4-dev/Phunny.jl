@@ -9,7 +9,7 @@ makedocs(;
     sitename="Phunny.jl",
     format=Documenter.HTML(;
     	prettyurls = get(ENV, "CI", "false") == "true",
-        canonical="https://alt-f4-dev.github.io/Phunny.jl",
+        canonical="https://alt-f4-dev.github.io/Phunny.jl/dev",
         edit_link="main",
         assets=String[],
     ),
