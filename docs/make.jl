@@ -24,4 +24,5 @@ makedocs(;
 deploydocs(;
     repo="github.com/alt-f4-dev/Phunny.jl.git",
     devbranch="main",
+    versions=nothing,
 )
