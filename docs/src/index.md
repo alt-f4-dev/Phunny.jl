@@ -4,7 +4,7 @@ CurrentModule = Phunny
 
 # Phunny
 
-Documentation for [Phunny](https://github.com/mani149/Phunny.jl).
+Documentation for [Phunny](https://github.com/alt-f4-dev/Phunny.jl).
 
 ## What's Phunny?
 
@@ -36,10 +36,10 @@ eigvals, eigvecs = phonons(model, FCMs, q0; q_basis=:rlu)
 Installation is currently possible via the Julia package registry.
 ```julia-repl
 julia> ]
-(v1.11) pkg> add https://github.com/mani149/Phunny.jl/
+(v1.11) pkg> add https://github.com/alt-f4-dev/Phunny.jl/
 
 ```
 ```julia-repl
-julia> using Pkg; Pkg.add("https://github.com/mani149/Phunny.jl/")
+julia> using Pkg; Pkg.add("https://github.com/alt-f4-dev/Phunny.jl/")
 ```
 

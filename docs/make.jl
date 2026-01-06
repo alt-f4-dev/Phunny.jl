@@ -5,11 +5,11 @@ DocMeta.setdocmeta!(Phunny, :DocTestSetup, :(using Phunny); recursive=true)
 
 makedocs(;
     modules=[Phunny],
-    authors="Isaac Ownby, Immanuel Schmidt",
+    authors="Isaac C. Ownby, Immanuel Schmidt",
     sitename="Phunny.jl",
     format=Documenter.HTML(;
     	prettyurls = get(ENV, "CI", "false") == "true",
-        canonical="https://mani149.github.io/Phunny.jl",
+        canonical="https://alt-f4-dev.github.io/Phunny.jl",
         edit_link="main",
         assets=String[],
     ),
@@ -22,6 +22,6 @@ makedocs(;
 )
 
 deploydocs(;
-    repo="github.com/mani149/Phunny.jl.git",
+    repo="github.com/alt-f4-dev/Phunny.jl.git",
     devbranch="main",
 )
