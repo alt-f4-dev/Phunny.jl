@@ -444,7 +444,7 @@ function group_velocity(
         v = zeros(Float64, N3)
 
         nh = nhat === nothing ? q/norm(q) : nhat
-        compute_group_velocities(v, dDx, dDy, dDz, dD, model Φ, q, nh; cryst=cryst)
+        compute_group_velocities(v, dDx, dDy, dDz, dD, model, Φ, q, nh; cryst=cryst)
         return v
     elseif method === :hessian #Γ-limit curvature
         iszero(norm(q)) || error(":hessian method only valid at Γ (q = 0)!")
