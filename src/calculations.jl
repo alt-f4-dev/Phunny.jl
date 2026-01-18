@@ -377,6 +377,90 @@ function phonons(model::Model, Φ, q::SVector{3,Float64}; q_basis::Symbol=:cart,
     perm = sortperm(E)
     return E[perm], vecs[:,perm]
 end
+#------------------------------#
+#                              #
+# Group velocity calculations  #
+#                              #
+#------------------------------#
+function compute_group_velocities!(v::AbstractVector{Float64},
+                                   dDx::AbstractMatrix{ComplexF64},
+                                   dDy::AbstractMatrix{ComplexF64},
+                                   dDz::AbstractMatrix{ComplexF64},
+                                   dD::AbstractMatrix{ComplexF64},
+                                   model::Model,
+                                   Φ::Dict{Tuple{Int,Int,SVector{3,Int}}, SMatrix{3,3,Float64,9}},
+                                   q_cart::SVector{3,Float64},
+                                   nhat::SVector{3,Float64}; cryst=cryst)
+    #unit direction
+    nh = nhat / norm(nhat)
+
+    # eigenpairs (E in meV, V columns ~ mass-weighted eigenvectors)
+    EmeV, V = phonons(model, Φ, q_cart; q_basis=:cart, cryst=cryst) #meV
+    
+    #Conversion factor for velocities in Å/ps
+    pref = (Phunny.ALPHA_meV^2)/(2*Phunny.HBAR_meV_ps)
+
+    # gradients into preallocated buffers
+    dynamical_gradient!(dDx, dDy, dDz, model, Φ, q_cart)
+
+    # directional derivative: dD = nh⋅∇D
+    @. dD = nh[1]*dDx + nh[2]*dDy + nh[3]*dDz
+    
+    @inbounds for ν in 1:length(EmeV)
+        ω = EmeV[ν]
+        if ω > 0
+            eν = view(V, :, ν) 
+            num = real(dot(eν, dD * eν)) #dλ/dq
+            v[ν] = pref*(num / ω) # Å/ps
+        else
+            v[ν] = 0.0
+        end
+    end
+    return v
+end
+"""
+    group_velocities(model, Φ, q; method=:gradient, cryst=nothing, nhat=nothing, dq=1e-3)
+
+Compute phonon group velocities `vₙ(q) = (1/ħ)⋅∇Eₙ(q)`.
+
+Methods:
+    - `:gradient` (default)
+    - `:hessian`
+    - `:fd`
+
+The method `:gradient` performs first-order perturbation theory on the dynamic matrix D(q).
+The method `:hessian` extracts Γ-limit sound speeds from the directional curvature of D(q).
+The method `:fd` calculates group velocity by finite-difference of `E(q)/|q|`. 
+
+Note, `:hessian` method requires that `nhat` is provided and works only at `q = [0,0,0]`. In other words, the `:hessian` method provides group velocities for acoustic phonon modes only. The finite-difference method `:fd` is best used for diagnostics and validation only.
+"""
+function group_velocity(
+        model::Model, Φ, q::SVector{3,Float64}; 
+        cryst=nothing, nhat=nothing, dq::Float64 = 1e-3)
+    if method === :gradient #∂D/∂q perturbation theory
+        N3 = 3*model.N
+        dD = zeros(ComplexF64, N3, N3)
+        dDx = similar(dD); dDy = similar(dD); dDz = similar(dD)
+        v = zeros(Float64, N3)
+
+        nh = nhat === nothing ? q/norm(q) : nhat
+        compute_group_velocities(v, dDx, dDy, dDz, dD, model Φ, q, nh; cryst=cryst)
+        return v
+    elseif method === :hessian #Γ-limit curvature
+        iszero(norm(q)) || error(":hessian method only valid at Γ (q = 0)!")
+        nhat === nothing && error(":hessian method requires nhat!")
+        return dynamical_hessian(model, Φ, nhat; cryst=cryst)
+    elseif method === :fd #finite-difference (diagnostic)
+        @warn "Finite-difference group velocities are diagnostic only!"
+        nh = nhat === nothing ? q/norm(q) : nhat
+        dirs = [nh]
+        v = sound_speeds(model, Φ, dirs; cryst=cryst, dq=dq)
+        return v[1]
+    else
+        error("Unknown group velocity method: $method")
+    end
+end
+
 #========================================================================#
 #--------------------------------------------------# [ Section 2 ]
 #                                                  #

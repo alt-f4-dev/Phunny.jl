@@ -29,6 +29,7 @@ function sound_speeds(model::Model, Φ, dirs::Vector{SVector{3,Float64}}; cryst=
     for (k, nhat) in pairs(dirs)
         q1 = dq * nhat                    # Å⁻¹
         E, _ = phonons(model, Φ, q1; q_basis=:cart, cryst=cryst)  # meV
+        E = sort(E)
         # Approximate slope dE/dq for the three acoustic branches
         dEdq = E[1:3] ./ dq               # meV·Å
         # Convert to m/s: v = (dE/dq)/ħ  with E in J, q in m⁻¹ → multiply by (meV→J) and (Å→m)
