@@ -73,4 +73,11 @@ end
 	@test bcoh ≈ [4.1491, 4.1491]
 end
 
-eigvals, eigvecs = phonons(mdl, Φ, @SVector[0.5,0.5,0.5]; q_basis=:cart, q_cell=:primitive)
+phonon_energies, phonon_vecs = phonons(mdl, Φ, @SVector[0.5,0.5,0.5]; q_basis=:cart, q_cell=:primitive)
+
+@testset "Phunny Validation Suite" begin
+    include(joinpath(@__DIR__, "Validation", "bcoh-test.jl"))
+    include(joinpath(@__DIR__, "Validation", "U-tensor-test.jl"))
+    include(joinpath(@__DIR__, "Validation", "DW-factor-test.jl"))
+    include(joinpath(@__DIR__, "Validation", "onephonon-dsf-test.jl"))
+end

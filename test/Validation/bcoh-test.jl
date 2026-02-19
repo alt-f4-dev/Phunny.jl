@@ -44,4 +44,4 @@ end
 	#4) Length mismatch error for explicitly defined vector
 	@test_throws ErrorException Phunny._resolve_bcoh(m; bcoh=[1.0]) #wrong length
 end
-print("bcoh auto-lookup tests: OK")
+print("bcoh auto-lookup: Tests Finished!\n")
