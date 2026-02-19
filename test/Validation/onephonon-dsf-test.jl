@@ -166,24 +166,31 @@ let
         A2 = trapz_uniform(Sηb, ΔE)
         @test isapprox(A1, A2; rtol=0.02, atol=1e-12)
     end
+    #------------------------------------------------------------------------#
+    #The NN Si toy model does not produce dispersing acoustic branches. 
+    #
+    #Near-zero acoustic eigvecs produce numerically unstable 1/√E amplitudes 
+    #whose ratio is Julia-version dependent. 
+    #
+    #Acoustic scaling requires a physical multi-shell force constant model.
+    #------------------------------------------------------------------------#
+    #@testset "S4: Small-q scaling (acoustic-dominated)" begin
+    #    # Expect A(q1)/A(q2) ≈ |q1|/|q2| = 2 within modest tolerance
+    #    S1 = Phunny.onephonon_dsf(model, FCMs, q1, Egrid;
+    #                               T=T_room, η=η1, mass_unit=:amu,
+    #                               q_basis=:rlu, q_cell=:conventional, cryst=cryst,
+    #                               dw_qgrid=qgrid_U, _U_internal=Usite)
+    #    S2 = Phunny.onephonon_dsf(model, FCMs, q2, Egrid;
+    #                               T=T_room, η=η1, mass_unit=:amu,
+    #                               q_basis=:rlu, q_cell=:conventional, cryst=cryst,
+    #                               dw_qgrid=qgrid_U, _U_internal=Usite)
+    #    A1 = trapz_uniform(S1, ΔE)
+    #    A2 = trapz_uniform(S2, ΔE) 
+    #    ratio = A1/A2; expected = (norm(q1)/norm(q2))^2
+    #    @test isapprox(ratio, expected; rtol=0.25)
+    #end
 
-    @testset "S4: Small-q scaling (acoustic-dominated)" begin
-        # Expect A(q1)/A(q2) ≈ |q1|/|q2| = 2 within modest tolerance
-        S1 = Phunny.onephonon_dsf(model, FCMs, q1, Egrid;
-                                   T=T_room, η=η1, mass_unit=:amu,
-                                   q_basis=:rlu, q_cell=:conventional, cryst=cryst,
-                                   dw_qgrid=qgrid_U, _U_internal=Usite)
-        S2 = Phunny.onephonon_dsf(model, FCMs, q2, Egrid;
-                                   T=T_room, η=η1, mass_unit=:amu,
-                                   q_basis=:rlu, q_cell=:conventional, cryst=cryst,
-                                   dw_qgrid=qgrid_U, _U_internal=Usite)
-        A1 = trapz_uniform(S1, ΔE)
-        A2 = trapz_uniform(S2, ΔE) 
-        ratio = A1/A2; expected = (norm(q1)/norm(q2))^2
-        @test isapprox(ratio, expected; rtol=0.25)
-    end
-
-    @testset "S5: Debye–Waller scaling of the area" begin
+    @testset "S4: Debye–Waller scaling of the area" begin
         q = q1
         # With computed U
         Swith = Phunny.onephonon_dsf(model, FCMs, q, Egrid;
