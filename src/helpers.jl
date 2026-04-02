@@ -279,7 +279,7 @@ end
 # Model construction helpers #
 #----------------------------#
 
-# Extract Sunny-like information without taking a hard dependency on Sunny.jl.
+# Extract Sunny-like information
 @inline function _to_phunny_spec(crystal)
     if hasproperty(crystal, :latvecs) && hasproperty(crystal, :positions) && hasproperty(crystal, :types)
         L  = SMatrix{3,3,Float64,9}(Matrix(getproperty(crystal, :latvecs)))
@@ -309,7 +309,7 @@ Bond assembly precedence:
 """
 function build_model(crystal; mass=:lookup, isotopes_by_site=nothing, isotopes_by_species=nothing,
                      neighbors_sunny=nothing, neighbors=nothing, cutoff=nothing, use_sunny_radius::Bool=true, 
-                     kL=1.0, kT=0.0, β=0.0, shell=:nn, tol=0.2, supercell=(1,1,1))
+                     kL=0.0, kT=0.0, β=0.0, shell=:nn, tol=0.2, supercell=(1,1,1))
     spec = _to_phunny_spec(crystal)
     L, fpos, species = spec.lattice, spec.positions, spec.species
 
@@ -373,6 +373,73 @@ function assign_force_constants!(model::Model, atom::Dict{Int,Symbol},
     end
     return model
 end
+
+#----------------------------------#
+# Acoustic Phonon Velocity Helpers #
+#----------------------------------#
+
+# Sound speeds along given unit directions (Cartesian Å⁻¹) via finite differences near Γ
+# Returns velocities for three acoustic branches (m/s) per direction.
+function sound_speeds(model::Model, Φ, dirs::Vector{SVector{3,Float64}}; cryst=nothing, dq=1e-3)
+    # Unit conversion
+    Åinv_to_minv = 1e10
+
+    speeds = Vector{NTuple{3,Float64}}(undef, length(dirs))
+    for (k, nhat) in pairs(dirs)
+        q1 = dq * nhat                    # Å⁻¹
+        E, _ = phonons(model, Φ, q1; q_basis=:cart, cryst=cryst)  # meV
+        E = sort(E)
+        # Approximate slope dE/dq for the three acoustic branches
+        dEdq = E[1:3] ./ dq               # meV·Å
+        # Convert to m/s: v = (dE/dq)/ħ  with E in J, q in m⁻¹ → multiply by (meV→J) and (Å→m)
+        v = ntuple(p-> (dEdq[p] * meV_to_J / ℏ) / Åinv_to_minv, 3)
+        speeds[k] = v
+    end
+    return speeds
+end
+
+#=
+    _max_acoustic_speed(model, Φ; cryst=nothing, q_cell=:primitive, dq=1e-3)
+
+Estimates the maximum acoustic group velocity over the three primitive reciprocal
+lattice directions, returning the result in meV·Å.
+
+Samples E(dq·n̂)/dq at a small but finite wavevector along each primitive reciprocal
+direction — the direct finite-difference definition of the acoustic group velocity at Γ.
+This is more numerically stable near Γ than the gradient method, which divides by ω.
+
+Used internally to construct the q-dependent mode threshold in `onephonon_dsf`:
+    eps_meV_q = eps_scale * v_max * |q_cart|
+
+Falls back to the conventional reciprocal lattice (2π·inv(L)') if Sunny is not loaded
+or no crystal is provided.
+
+=#
+function _max_acoustic_speed(model::Model,
+                              Φ::Dict{Tuple{Int,Int,SVector{3,Int}},SMatrix{3,3,Float64,9}};
+                              cryst=nothing, q_cell::Symbol=:primitive,
+                              dq::Float64=1e-3)::Float64
+    # Primitive reciprocal directions — correct for any crystal symmetry
+    G = if cryst !== nothing && isdefined(Main, :Sunny) && q_cell === :primitive
+        getfield(Main, :Sunny).prim_recipvecs(cryst)
+    else
+        2π * inv(model.lattice)'   # fallback: conventional reciprocal from direct lattice
+    end
+
+    vmax_meVA = 0.0
+    for col in eachcol(G)
+        nhat   = SVector{3,Float64}(col / norm(col))
+        # sound_speeds returns NTuple{3,Float64} of speeds in m/s per direction
+        speeds = sound_speeds(model, Φ, [nhat]; cryst=cryst, dq=dq)[1]
+        # Convert m/s → meV·Å: v[meV·Å] = v[m/s] * ℏ[J·s] / (meV_to_J[J] * 1e-10[m/Å])
+        for vms in speeds
+            vmax_meVA = max(vmax_meVA, vms * ℏ / (meV_to_J * 1e-10))
+        end
+    end
+    return max(vmax_meVA, 1e-2)   # 1e-2 meV·Å floor for purely optical or pathological models
+end
+
+
 
 #------------------------------------------------------#
 # atomic_index() ~ maps index to atomic label	       #

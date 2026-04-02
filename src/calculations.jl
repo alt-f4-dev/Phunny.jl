@@ -385,7 +385,7 @@ function compute_group_velocities!(v::AbstractVector{Float64},
     return v
 end
 """
-    group_velocities(model, Φ, q; method=:gradient, cryst=nothing, nhat=nothing, dq=1e-3)
+    group_velocity(model, Φ, q; method=:gradient, cryst=nothing, nhat=nothing, dq=1e-3)
 
 Compute phonon group velocities `vₙ(q) = (1/ħ)⋅∇Eₙ(q)`.
 
@@ -398,7 +398,8 @@ The method `:gradient` performs first-order perturbation theory on the dynamic m
 The method `:hessian` extracts Γ-limit sound speeds from the directional curvature of D(q).
 The method `:fd` calculates group velocity by finite-difference of `E(q)/|q|`. 
 
-Note, `:hessian` method requires that `nhat` is provided and works only at `q = [0,0,0]`. In other words, the `:hessian` method provides group velocities for acoustic phonon modes only. The finite-difference method `:fd` is best used for diagnostics and validation only.
+Note, `:hessian` method requires that `nhat` is provided and works only at `q = [0,0,0]`. In other words, the `:hessian` method provides group velocities for acoustic phonon modes only. 
+The finite-difference method `:fd` is best used for diagnostics and validation only when near from `q = [0,0,0]`. The `:gradient` method should be used away from the Γ-point.
 """
 function group_velocity(
         model::Model, Φ, q::SVector{3,Float64}; 
@@ -460,7 +461,7 @@ function msd_from_phonons(model::Model, Φ;
             cothx = 1.0 / tanh(x)
             for s in 1:N
                 i1 = 3s - 2; i2 = 3s - 1; i3 = 3s
-                #Mass-weighted igenvector components
+                #Mass-weighted eigenvector components
                 e1 = Evec[i1, ν]; e2 = Evec[i2, ν]; e3 = Evec[i3, ν]
                 #Mass-weighted square amplitude
                 amp2 = (abs2(e1) + abs2(e2) + abs2(e3)) #/ model.mass[s]
@@ -616,7 +617,7 @@ function onephonon_dsf(model::Model, Φ, q::SVector{3,Float64}, Evals::AbstractV
                         q_basis::Symbol=:cart, q_cell::Symbol=:primitive, cryst=nothing,
                         dw_qgrid::NTuple{3,Int}=(16,16,16), _U_internal::Union{Nothing,Vector{SMatrix{3,3,Float64,9}}}=nothing,
 			iso_by_site::Union{Nothing,Dict{Int,Int}}=nothing, iso_by_species::Union{Nothing,Dict{Symbol,Int}}=nothing,
-                        eps_meV::Real=0.5)
+                        eps_meV::Real=0.01)
 
     #Number of particles per unit cell & mass
     N = model.N; M = model.mass
@@ -629,9 +630,8 @@ function onephonon_dsf(model::Model, Φ, q::SVector{3,Float64}, Evals::AbstractV
 
     #Resolve momentum/position units & precompile phase info
     qvec = q_basis === :cart ? q : q_cartesian(cryst, q; basis=:rlu, cell=q_cell)
-    #rvec = q_basis === :cart ? [model.lattice*model.fracpos[s] for s in 1:N] : [model.fracpos[s] for s in 1:N]
-    #phase = q_basis === :cart ? [exp(im*dot(qvec, rvec[s])) for s in 1:N] : [exp(im*dot(2π*qvec, rvec[s])) for s in 1:N]
-    
+
+    #Precompute positions and phases    
     rvec = [model.lattice*model.fracpos[s] for s in 1:N]
     phase = [exp(im*dot(qvec, rvec[s])) for s in 1:N]
 
@@ -642,17 +642,23 @@ function onephonon_dsf(model::Model, Φ, q::SVector{3,Float64}, Evals::AbstractV
 
     # Solve eigenvalue problem; Energies in meV from phonons(); eigenvectors are mass-weighted
     Eν, Evec = phonons(model, Φ, q; q_basis=q_basis, q_cell=q_cell, cryst=cryst)
-    #Assert that Emin = -1*Emax or 0 (until arbitrary grid normalization is implemented)  
-    Emin, Emax = extrema(Evals); @assert Emin == -Emax || Emin == 0.0 "Minimum Energy MUST be zero or -1*Emax!"
+    
+    #Extrema of ω-axis
+    Emin, Emax = extrema(Evals)
     
     # Bose factor in meV units
     nB = @. 1/(exp(Eν/(K_B_meV_per_K*T)) - 1)
+    
+    #Γ-point dispersion scale
+    vmax = _max_acoustic_speed(model, Φ; cryst=cryst, q_cell=q_cell)
+    eps_meV_q = max(eps_meV*vmax*norm(qvec), 1e-6)
 
     #Dynamic Structure Factor
     Sω = zeros(Float64, length(Evals))
     for ν in 1:length(Eν)
         EmeV = Eν[ν]
-        EmeV <= eps_meV && continue
+        #EmeV <= eps_meV && continue
+        EmeV ≤ eps_meV_q && continue
         
         #Coherent scattering amplitude
         Aq = 0.0 + 0.0im
@@ -709,7 +715,7 @@ function onephonon_dsf_4d(model::Model, Φ,
                           threads::Bool=true, dw_qgrid::NTuple{3,Int}=(12,12,12),
 			  iso_by_site::Union{Nothing,Dict{Int,Int}}=nothing, 
 			  iso_by_species::Union{Nothing,Dict{Symbol,Int}}=nothing,
-                          eps_meV::Real=0.5)
+                          eps_meV::Real=0.01)
 
     n1, n2, n3, nE = length(q1), length(q2), length(q3), length(Evals)
     S4 = zeros(Float64, n1, n2, n3, nE)
@@ -717,8 +723,7 @@ function onephonon_dsf_4d(model::Model, Φ,
     # Precompute anisotropic Debye–Waller tensors once (Å^2)
     U = U_from_phonons(model, Φ; T=T, cryst=cryst, qgrid=dw_qgrid, q_cell=q_cell)
 
-    #NEW: resolve bcoh once (thread-safe, read-only, vector) 
-    #Note: onephonon_dsf(...; bcoh=bw) was onephonon_dsf(...; bcoh=bcoh) before automatic look-up
+    #resolve bcoh once (thread-safe, read-only, vector) 
     bw = _resolve_bcoh(model; bcoh=bcoh, iso_by_site=iso_by_site, iso_by_species=iso_by_species)
 
     # Prepare reciprocal matrix for RLU if needed

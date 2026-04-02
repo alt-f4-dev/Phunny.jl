@@ -16,28 +16,7 @@ function min_eigen_energy_along(model::Model, Φ, qs::Vector{SVector{3,Float64}}
 end
 
 
-## per-system
-# Sound speeds along given unit directions (Cartesian Å⁻¹) via finite differences near Γ
-# Returns velocities for three acoustic branches (m/s) per direction.
-function sound_speeds(model::Model, Φ, dirs::Vector{SVector{3,Float64}}; cryst=nothing, dq=1e-3)
-    # Constants
-    #ħ = ℏ                                 # J·s
-    meV_to_J = 1.602176634e-22
-    Åinv_to_minv = 1e10
 
-    speeds = Vector{NTuple{3,Float64}}(undef, length(dirs))
-    for (k, nhat) in pairs(dirs)
-        q1 = dq * nhat                    # Å⁻¹
-        E, _ = phonons(model, Φ, q1; q_basis=:cart, cryst=cryst)  # meV
-        E = sort(E)
-        # Approximate slope dE/dq for the three acoustic branches
-        dEdq = E[1:3] ./ dq               # meV·Å
-        # Convert to m/s: v = (dE/dq)/ħ  with E in J, q in m⁻¹ → multiply by (meV→J) and (Å→m)
-        v = ntuple(p-> (dEdq[p] * meV_to_J / ℏ) / Åinv_to_minv, 3)
-        speeds[k] = v
-    end
-    return speeds
-end
 
 ## per-system
 # High-level summary for quick realism checks
@@ -62,7 +41,6 @@ function validate_summary(model::Model, Φ; cryst=nothing, qpath_rlu=nothing, T=
 
     # Sound speeds along axes
     dirs = [@SVector[1.0,0,0], @SVector[0,1.0,0], @SVector[0,0,1.0]]
-    #out[:sound_speeds_mps] = sound_speeds(model, Φ, dirs; cryst=cryst)
     out[:group_velocities] = group_velocity(model, Φ, @SVector[1.0, 0.0, 0.0]; cryst=cryst, nhat=nothing, dq=1e-3)
     return out
 end
