@@ -7,36 +7,44 @@
 # Data structures #
 #-----------------#
 
+
+#Two-Body Central Pair (Bond Stretching) defined by one scalar invariant rᵢⱼ
+#The exact Hessian element is Φ = V′′(r₀)êêᵀ + V′(r₀)(𝕀 - êêᵀ)/r₀
 struct Bond{T}
     i::Int                     # atom index in home cell (1..N)
     j::Int                     # atom index in cell displaced by R
     R::SVector{3,Int}          # lattice offset (in integer supercell coordinates)
     r0::SVector{3,Float64}     # equilibrium cartesian bond vector from i@0 to j@R (Å)
     kL::T                      # longitudinal spring (eV/Å^2 by convention)
-    kT::T                      # transverse spring   (eV/Å^2 by convention)
+    kT::T                      # transverse spring ~ kT ≠ 0 only when tension/compression is applied to the bond
 end
 
+#Three-Body (Bond Bending)
+#Defined by one scalar invariant θᵢⱼₖ
+#θᵢⱼₖ = angle between (i-j) and (j-k)
+struct Angle{T}
+    i::Int              # neighbor atom index
+    j::Int              # vertex atom index in home cell
+    k::Int              # neighbor atom index
+    Rji::SVector{3,Int} # lattice offset of atom i relative to j
+    Rjk::SVector{3,Int} # lattice offset of atom k relative to j
+    β::T                # angular stiffness (energy / rad² by convention)
+end
+
+
+
+#Lattice Model
 mutable struct Model{T}
     lattice::SMatrix{3,3,Float64,9}         # columns = a1 a2 a3 (Å)
     fracpos::Vector{SVector{3,Float64}}     # fractional positions in [0,1)
     species::Vector{Symbol}                 # species labels
     mass::Vector{T}                         # length N, mass units (amu or kg; see DSF kwarg)
     bonds::Vector{Bond{T}}                  # pair list with (kL,kT)
-    N::Int
+    angles::Vector{Angle{T}}                # bond bending list with β
+    N::Int                                  # Number of atoms in unit cell
 end
 
 
-
-#Add FCM (3x3) Block Matrix
-@inline function _add_block!(Φ::Dict{Tuple{Int,Int,SVector{3,Int}}, SMatrix{3,3,Float64,9}},
-                             key::Tuple{Int,Int,SVector{3,Int}}, M::SMatrix{3,3,Float64,9})
-    Φ[key] = get(Φ, key, zeros(SMatrix{3,3,Float64,9})) + M
-    return nothing
-end
-
-
-# Convenience
-mass_vector(m::Model) = m.mass
 
 #---------#
 # Helpers #

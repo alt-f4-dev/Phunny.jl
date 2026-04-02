@@ -6,7 +6,10 @@
 # 							       #
 # 					      - Isaac C. Ownby #
 ################################################################
-using LinearAlgebra, StaticArrays, SparseArrays, .Phunny, Sunny, Test, Plots
+using LinearAlgebra, StaticArrays, SparseArrays, Sunny, Test, Plots
+
+include(joinpath(@__DIR__, "../..", "src/Phunny.jl"))
+using .Phunny
 
 #---------------------------------------#
 #   Build Model for 1D Diatomic Chain   #
@@ -23,7 +26,7 @@ fpos = [@SVector[0.0, 0.0, 0.0], @SVector[0.5,0.0,0.0]]
 types = ["Cu", "O"]
 
 #Spring constants
-kL, kT = 10.0, 10.0
+kL, kT = 10.0, 0.0
 
 #Build Phunny Model
 cryst = Crystal(Matrix(L), fpos; types=types)
@@ -38,14 +41,14 @@ model = build_model(cryst; cutoff=0.6a, kL=kL, kT=kT)
 FCMs = assemble_force_constants!(model)
 
 #Enforce acoustic sum rule
-enforce_asr!(FCMs, model.N)
+#enforce_asr!(FCMs, model.N)
 
 #-----------------------#
 #   Analytic Solution   #
 #-----------------------#
 
 #Extract masses 
-M = mass_vector(model) #units ~ atomic mass unit (amu)
+M = model.mass #units ~ atomic mass unit (amu)
 m1, m2 = M[1], M[2]
 
 #Converts frequency to meV
@@ -122,11 +125,12 @@ function plot_diatomic_dispersions(qs, numerics, analytics; savepath=nothing)
 		display(p)
 	else
 		savefig(p, savepath)
+                print("\n")
 		@info "Saved diatomic chain dispersion plot to $(savepath)"
 	end
 	return p
 end
 spath = "~/Downloads/temporary-figures/phunny-1D-diatomic-chain.png"
-plot_diatomic_dispersions(qs, [num_LA, num_LO], [ana_LA, ana_LO]; savepath=spath)
+plot_diatomic_dispersions(qs, [num_LA, num_LO], [ana_LA, ana_LO]; savepath=nothing)
 
 

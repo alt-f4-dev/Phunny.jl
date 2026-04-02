@@ -8,8 +8,11 @@ Physics textbook, for reference.
 #-----------------#
 # Import Packages #
 #-----------------#
-using LinearAlgebra, StaticArrays, Sunny, Phunny
+using LinearAlgebra, StaticArrays, Sunny
 using Combinatorics
+
+include(joinpath(@__DIR__, "../..", "src/Phunny.jl"))
+using .Phunny
 
 #--------------------------------------------------------------------#
 # Diamond ~ Face-Centered Cubic Crystal				     #
@@ -36,10 +39,9 @@ for b in model.bonds
 end
 @info "Bonds per Atom: $(counts)\n"
 FCMs = assemble_force_constants!(model)
-enforce_asr!(FCMs, model.N)
 
 #---Physical Units---#
-M = mass_vector(model) #amu
+M = model.mass #amu
 hbar = Phunny.HBAR_meV_ps
 
 #------------------------------------------------------#

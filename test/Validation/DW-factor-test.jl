@@ -1,8 +1,3 @@
-using Test, LinearAlgebra, StaticArrays, Sunny, Statistics, Phunny
-
-# Load your package
-#include(joinpath(@__DIR__, "../../src/Phunny.jl"))
-#using .Phunny
 let
     # -----------------------------
     # Build crystal & force model
@@ -14,7 +9,7 @@ let
     cryst = Crystal(L, fpos; types=types)
 
     cutoff = a*sqrt(3)/4
-    kL, kT = 75.0, 27.0
+    kL, kT = 75.0, 0.0
     model = Phunny.build_model(cryst; cutoff=cutoff, kL=kL, kT=kT)
     FCMs  = Phunny.assemble_force_constants!(model)
     Phunny.enforce_asr!(FCMs, model.N)
@@ -72,6 +67,9 @@ let
     Ū300  = avgU(U300)
     Ū1500 = avgU(U1500)
     Ū3000 = avgU(U3000)
+    
+    Ū2000 = avgU(Phunny.U_from_phonons(model, FCMs; T=2000.0, cryst=cryst, qgrid=qgrid, q_cell=:conventional, eps_meV=epsE))
+    Ū4000 = avgU(Phunny.U_from_phonons(model, FCMs; T=4000.0, cryst=cryst, qgrid=qgrid, q_cell=:conventional, eps_meV=epsE))
 
     # Isotropic MSD for reference
     msd0    = tr(Ū0)/3
@@ -136,10 +134,10 @@ let
         # In the classical limit, W(T) ∝ T at fixed q
         q = @SVector[0.20, 0.0, 0.0]
         W0 = DW_exponent(cryst, Ū300, q; cell=:conventional)
-        W1 = DW_exponent(cryst, Ū1500, q; cell=:conventional)
-        W2 = DW_exponent(cryst, Ū3000, q; cell=:conventional)
+        W1 = DW_exponent(cryst, Ū2000, q; cell=:conventional)
+        W2 = DW_exponent(cryst, Ū4000, q; cell=:conventional)
         r  = W2/W1
-        @test isapprox(r, 3000/1500; rtol=0.05)
+        @test isapprox(r, 4000/2000; rtol=0.05)
         @test W0 < W1; @test W1 < W2
     end
 

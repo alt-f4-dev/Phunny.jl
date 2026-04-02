@@ -1,4 +1,7 @@
-using LinearAlgebra, StaticArrays, Sunny, Phunny, GLMakie, Statistics
+using LinearAlgebra, StaticArrays, Sunny, GLMakie, Statistics, BenchmarkTools
+
+include(joinpath(@__DIR__, "../..", "src/Phunny.jl"))
+using .Phunny
 
 #---------------------------------------------------------------#
 #References: 							#
@@ -33,13 +36,12 @@ types = ["Cu", "O", "O", "O", "O", "La", "La"]
 #Crystal + Model
 cryst = Crystal(L, fpos; types) 
 cutoff = 0.75*minimum((a,b,c)); 
-model = build_model(cryst; cutoff)
+model = build_model(cryst; cutoff, β=0.2, shell=:all, tol=0.15)
 
-#Manually Defined Bonds & Force Constants 
-#       (:Atom₁, :Atom₂) => (kL, kT)
-bond_dict = Dict( (:Cu, :O) => (190.0, 28.0),
-		  (:O,  :O) => (40.00, 4.00),
-		  (:O,  :La) => (20.00, 1.00))
+#Manually Defined Bonds & Force Constants ~ (:Atom₁, :Atom₂) => (kL, kT)
+bond_dict = Dict( (:Cu, :O)  => (10.0, 0.0),
+		  (:O,  :O)  => (2.00, 0.0),
+		  (:O,  :La) => (5.00, 0.0))
 
 #Index atoms
 atoms = atomic_index(types)
@@ -51,14 +53,12 @@ atoms = atomic_index(types)
 ############
 # Analysis #
 ############
-bond_dict[:O, :O] = (3, 3)
-bond_dict[:O, :La] = (0.2, 0.2)
 #Calibration
-for (kL_CuO, kT_CuO) in ((1,1), (10,1), (33,2), (50,5), (4,12), (80, 28), (190,28), (210,32), (220, 35))
+for (kL_CuO, kT_CuO) in ((1,0), (4,0), (10,0), (33,0), (50,0), (80, 0), (190,0), (210,0), (220, 0))
     bond_dict[:Cu,:O] = (kL_CuO, kT_CuO)
     
     assign_force_constants!(model, atoms, bond_dict)
-    FCMs = assemble_force_constants!(model; β_bend=0.2, bend_shell=:all, bend_tol=0.15); enforce_asr!(FCMs, model.N)
+    FCMs = assemble_force_constants!(model)
 
     EΓ, _ = phonons(model, FCMs, @SVector[0.0, 0.0, 0.0]; 
                     q_basis=:rlu, q_cell=:primitive, cryst=cryst)
@@ -66,18 +66,19 @@ for (kL_CuO, kT_CuO) in ((1,1), (10,1), (33,2), (50,5), (4,12), (80, 28), (190,2
         @info "Cu-O (kL=$(kL_CuO)) ⟶ Γ optics ≈  $(round.(EΓ[4:end];digits=2))"
     end
 end
+bond_dict[:Cu,:O] = (10.0, 0.0)
 #kL : Controls Acoustic Scaling
 #kT : Controls Optical Scaling
 
 #################
 # FCM & Phonons #
 #################
-bond_dict[:Cu,:O] = (4, 12)
+
+#Assign force constants using bond dictionary
 assign_force_constants!(model, atoms, bond_dict)
 
 #Assemble Force Constants Matrices
-ϕ = assemble_force_constants!(model; β_bend=0.2, bend_shell=:nn, bend_tol=0.15)
-enforce_asr!(ϕ, model.N)
+ϕ = assemble_force_constants!(model)
 
 #Minimum Image
 @inline minimg(x) = x .- round.(x)
@@ -96,8 +97,8 @@ apical = r_cartesian(L, fpos[1], fpos[4])
 eigenpairs = phonons(model, ϕ, @SVector[0.0, 0.0, 0.0]; 
 		     q_basis=:rlu, q_cell=:primitive, cryst=cryst)
 
-@assert any(ω -> 60.0 ≤ ω ≤ 95.0, eigenpairs[1]) "Expected oxygen-dominant optical modes in ~[60, 95] meV window for La2CuO4!"
-@show size(eigenpairs[2])
+@assert any(ω -> 60.0 ≤ ω ≤ 95.0, eigenpairs[1]) "Expected oxygen-dominant optical modes in ~[60, 95] meV window for La2CuO4! $(eigenpairs[1])"
+#@show size(eigenpairs[2])
 #display(heatmap(abs.(eigenpairs[2]).^2))
 
 ############
@@ -111,18 +112,25 @@ eigenpairs = phonons(model, ϕ, @SVector[0.0, 0.0, 0.0];
 
 #Plots S(q,ω) = ∑ₙ S(qₙ, ω) : S(qₙ,ω) = S[qₙ,:]
 function plot_dsf_line!(cryst, model, Φ; 
-                        q₀=@SVector[-1.0, 0.0, 0.0], 
-                        q₁=@SVector[1.0, 0.0, 0.0], 
-                        nq=81, ωmax=110.0, nω=1201, 
+                        q₀=@SVector[-2.0, 0.0, 0.0], 
+                        q₁=@SVector[2.0, 0.0, 0.0], 
+                        nq=101, ωmax=110.0, nω=801, 
                         η=1.0, q_cell=:primitive)
     qs = [SVector{3,Float64}((1-t).*q₀ .+ t.*q₁) for t in range(0,1;length=nq)]
     ωs = range(0.0, ωmax; length=nω)
     σ = η/sqrt(8*log(2))
 
-    Sqω = zeros(Float64, nq, nω)
+    # Precompute anisotropic Debye–Waller tensors once (Å^2)
+    U₁ = U_from_phonons(model, Φ; T=0.0, cryst=cryst, qgrid=(16,16,16), q_cell=q_cell)
+    U₂ = U_from_phonons(model, Φ; T=600.0, cryst=cryst, qgrid=(16,16,16), q_cell=q_cell)
+    
+    Sqω₁ = zeros(Float64, nq, nω)
+    Sqω₂ = zeros(Float64, nq, nω)
     @inbounds for (iq, q) in enumerate(qs)
-        Sω = onephonon_dsf(model, Φ, q, ωs; q_basis=:rlu, q_cell=q_cell, cryst=cryst, T=0.25)
-        Sqω[iq,:] .= Sω
+        Sω₁ = onephonon_dsf(model, Φ, q, ωs; q_basis=:rlu, q_cell=q_cell, cryst=cryst, T=0.0, _U_internal=U₁)
+        Sω₂ = onephonon_dsf(model, Φ, q, ωs; q_basis=:rlu, q_cell=q_cell, cryst=cryst, T=600.0, _U_internal=U₂)
+        Sqω₁[iq,:] .= Sω₁
+        Sqω₂[iq,:] .= Sω₂
     end
     
     @inline lohi(z) = begin
@@ -132,14 +140,33 @@ function plot_dsf_line!(cryst, model, Φ;
 	(lo, hi)
     end
 
-    fig = Figure(size=(500,500))
-    ax = Axis(fig[1,1], xlabel="q index (X ↦ Γ ↦ X)", ylabel = "Energy (meV)", title="La₂CuO₄ | One-Phonon S(q,ω)") 
-    hm = heatmap!(ax, 1:nq, ωs, Sqω ; interpolate=true, colormap=:viridis, colorrange=(0,0.3))#lohi(Sqω))
+    fig = Figure(size=(800,400))
+    
+    ax₁ = Axis(fig[1,1], xlabel="q index (X ↦ Γ ↦ X)", ylabel = "Energy (meV)", title="La₂CuO₄ | One-Phonon S(q,ω) | T = 0K") 
+    hm = heatmap!(ax₁, 1:nq, ωs, Sqω₁ ; interpolate=true, colormap=:viridis, colorrange=lohi(Sqω₂))
     Colorbar(fig[1,2], hm; label="Intensity")
+    
+    ax₂ = Axis(fig[1,3], xlabel="q index (X ↦ Γ ↦ X)", ylabel = "Energy (meV)", title="La₂CuO₄ | One-Phonon S(q,ω) | T = 600K") 
+    hm = heatmap!(ax₂, 1:nq, ωs, Sqω₂ ; interpolate=true, colormap=:viridis, colorrange=lohi(Sqω₂))
+    Colorbar(fig[1,4], hm; label="Intensity") 
+
     screen=display(fig); wait(screen)
 end
-plot_dsf_line!(cryst, model, ϕ; q_cell=:primitive, η=1.0)
+Base.@time plot_dsf_line!(cryst, model, ϕ; q_cell=:primitive, η=0.5, nq=601, nω=1001)
 
+velocities = group_velocity(model, ϕ, @SVector[1.0, 0.0, 0.0]; cryst=cryst, nhat=nothing, dq=1e-3)
+
+for (phonon_mode, velocity) in enumerate(velocities)
+    velocity ≤ 0.1 && continue
+    @show (phonon_mode, velocity)
+end
+
+summary = validate_summary(model, ϕ; cryst=cryst, qpath_rlu=nothing, T=0.0)
+@show summary[:ASR_residual]
+@show summary[:Rigid_translation_residual]
+@show summary[:Rigid_rotation_force_net] 
+@show summary[:Rigid_rotation_torque_net] 
+@show summary[:Rigid_rotation_force_max]
 
 
 

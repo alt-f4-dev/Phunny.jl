@@ -1,4 +1,4 @@
-using Test, LinearAlgebra, StaticArrays, Sunny, Phunny
+#using Test, LinearAlgebra, StaticArrays, Sunny
 let
     # --- Build Crystal & Model --- #
     a = 5.43; L = lattice_vectors(a,a,a,90,90,90) #Conventional Cubic
@@ -6,13 +6,14 @@ let
     cryst = Crystal(L, fpos; types=types)
 
     cutoff = a*(sqrt(3)/4) #Target NN Bonds
-    kL = 75.0; kT = 27.0
+    kL = 75.0; kT = 0.0
+    
     model = build_model(cryst; cutoff=cutoff, kL=kL, kT=kT)
     FCMs = assemble_force_constants!(model)
-    enforce_asr!(FCMs, model.N)
+    
 
     # --- Useful Constants --- #
-    T1, T2 = 300.0, 600.0
+    T1, T2 = 300.0, 900.0
     grid1, grid2 = (8,8,8), (12,12,12)
 
     # --- Quick Sanity Check for Mass --- #
@@ -51,9 +52,9 @@ let
     end
 
     @testset "U: (T -> Inf) High-T Scaling" begin
-        U0 = U_from_phonons(model, FCMs; T=T1, cryst=cryst, qgrid=grid1, q_cell=:conventional)
-        U1 = U_from_phonons(model, FCMs; T=T1*T1, cryst=cryst, qgrid=grid1, q_cell=:conventional)
-        U2 = U_from_phonons(model, FCMs; T=T2*T2, cryst=cryst, qgrid=grid1, q_cell=:conventional)
+        U0 = U_from_phonons(model, FCMs; T=T1, cryst=cryst, qgrid=grid2, q_cell=:conventional)
+        U1 = U_from_phonons(model, FCMs; T=T1*T1, cryst=cryst, qgrid=grid2, q_cell=:conventional)
+        U2 = U_from_phonons(model, FCMs; T=T2*T2, cryst=cryst, qgrid=grid2, q_cell=:conventional)
         r = sum(tr.(Matrix.(U2))) / sum(tr.(Matrix.(U1)))
         @test isapprox(r, (T2*T2)/(T1*T1); rtol=5e-2) #Linear Scaling as T → ∞
             

@@ -1,4 +1,4 @@
-using .Phunny, StaticArrays, Test, LinearAlgebra
+#using StaticArrays, Test, LinearAlgebra
 
 # --- Minimal Model Constructor for bcoh Checks Only --- #
 function _toy_model(species::Vector{Symbol})
@@ -7,7 +7,8 @@ function _toy_model(species::Vector{Symbol})
 	fracpos = [@SVector[0.0, 0.0, 0.0] for _ in 1:N]
 	mass = fill(28.085, N) #Dummy masses (not used)
 	bonds = Phunny.Bond{Float64}[] #Empty Bond List
-	return Phunny.Model(lattice, fracpos, species, mass, bonds, N)
+        angles = Phunny.Angle{Float64}[] #Empty Angle List
+	return Phunny.Model(lattice, fracpos, species, mass, bonds, angles, N)
 end
 
 # --- Unit Tests for Automatic Coherent-Scattering Length Resolution --- #

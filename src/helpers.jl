@@ -153,6 +153,53 @@ function neighbor_bonds_radius(cryst; cutoff::Real, kL::Union{Real,Function}=1.0
     return neighbor_bonds_from_sunny(cryst, bonds_sunny; kL=kL, kT=kT)
 end
 
+#----------------------------------------------------------#
+# Three-body Bond Angle Discovery from Canonical Bond List #
+#----------------------------------------------------------#
+function find_bond_angles(bonds::Vector{Bond{T}}; β::Real=zero(T), shell::Symbol=:nn, tol::Real=0.20) where T
+    
+    #Expand canonical bonds into directed neighbor list
+    neighbor = Dict{Int, Vector{Phunny.Bond{Float64}}}()
+    for b in bonds
+        push!(get!(Vector{Phunny.Bond{Float64}}, neighbor, b.i), b)
+        if !(b.i == b.j && b.R == SVector{3,Int}(0,0,0))
+            push!(get!(Vector{Phunny.Bond{Float64}}, neighbor, b.j), Phunny.Bond{Float64}(b.j,b.i,-b.R,-b.r0,b.kL,b.kT))
+        end
+    end
+
+    #For each vertex (j), select eligible neighbors and enumerate angle pairs
+    angles = Angle{Float64}[]; βval = Float64(β)
+    for (j, nb) in neighbor
+        length(nb) < 2 && continue
+        
+        #Shell selection
+        dists = [norm(n.r0) for n in nb]
+        rmin = minimum(dists)
+        sel = if shell === :nn
+            [idx for (idx, d) in enumerate(dists) if d ≤ (1.0 + tol)*rmin]
+        elseif shell === :all
+            eachindex(nb)
+        else
+            error("Unknown shell criteria: $shell. Use :nn or :all.")
+        end
+        length(sel) < 2 && continue
+
+        #Unique pairs with canonical ordering (atomic index, lattice offset)
+        for a in 1:length(sel)-1, b in a+1:length(sel)
+            ni = nb[sel[a]]; nk = nb[sel[b]]
+            i, Rji = ni.j, ni.R
+            k, Rjk = nk.j, nk.R
+
+            if (i > k) || (i == k && Tuple(Rji) > Tuple(Rjk))
+                i, k = k, i
+                Rji, Rjk = Rjk, Rji
+            end
+
+            push!(angles, Angle(i,j,k,Rji,Rjk,βval))
+        end
+    end
+    return angles
+end
 
 #
 #
@@ -248,7 +295,7 @@ end
 end
 
 """
-    build_model(crystal; mass, neighbors_sunny=nothing, neighbors=nothing, cutoff=nothing, use_sunny_radius=true, kL=1.0, kT=1.0, supercell=(1,1,1))
+    build_model(crystal; mass, neighbors_sunny=nothing, neighbors=nothing, cutoff=nothing, use_sunny_radius=true, kL=1.0, kT=0.0, β=0.0, shell=:nn, tol=0.2, supercell=(1,1,1))
 
 Create a `Model` from a Sunny-like `crystal` object. Minimal interface expected:
 - Either Sunny-style fields: `crystal.latvecs` (3×3), `crystal.positions` (fractional), `crystal.types` (Strings)
@@ -261,7 +308,8 @@ Bond assembly precedence:
 4. Else → fallback to portable cutoff scan `neighbor_bonds_cutoff`.
 """
 function build_model(crystal; mass=:lookup, isotopes_by_site=nothing, isotopes_by_species=nothing,
-                     neighbors_sunny=nothing, neighbors=nothing, cutoff=nothing, use_sunny_radius::Bool=true, kL=1.0, kT=1.0, supercell=(1,1,1))
+                     neighbors_sunny=nothing, neighbors=nothing, cutoff=nothing, use_sunny_radius::Bool=true, 
+                     kL=1.0, kT=0.0, β=0.0, shell=:nn, tol=0.2, supercell=(1,1,1))
     spec = _to_phunny_spec(crystal)
     L, fpos, species = spec.lattice, spec.positions, spec.species
 
@@ -277,6 +325,8 @@ function build_model(crystal; mass=:lookup, isotopes_by_site=nothing, isotopes_b
         collect(Float64.(mass))
     end
 
+    #@assert length(fpos) == length(species) == length(mass)
+    
     bonds = nothing
     if neighbors_sunny !== nothing
         bonds = neighbor_bonds_from_sunny(crystal, neighbors_sunny; kL=kL, kT=kT)
@@ -289,25 +339,39 @@ function build_model(crystal; mass=:lookup, isotopes_by_site=nothing, isotopes_b
         bonds = neighbor_bonds_cutoff(L, fpos; cutoff=cutoff, kL=kL, kT=kT, supercell=supercell)
     end
 
-    return Model(L, fpos, species, massvec, bonds, length(fpos))
+    angles = find_bond_angles(bonds; β=β, shell=shell, tol=tol)
+
+    return Model(L, fpos, species, massvec, bonds, angles, length(fpos))
 end
 
 
-#From here down is exploratory
-
-#I think this one works as intended
 function assign_force_constants!(model::Model, atom::Dict{Int,Symbol},
-				 bonds::Dict{Tuple{Symbol,Symbol},Tuple{Float64,Float64}})
-	@inline canonical!(s1,s2) = s1 <= s2 ? (atom[s1], atom[s2]) : (atom[s2], atom[s1])
-	for e in eachindex(model.bonds)
-		b = model.bonds[e]
-		pair = canonical!(b.i, b.j)
-		if haskey(bonds, pair)
-			kL, kT = bonds[pair]
-			model.bonds[e] = Phunny.Bond(b.i, b.j, b.R, b.r0, kL, kT)
-		end
-	end
-	return model
+				 bonds::Dict{Tuple{Symbol,Symbol},Tuple{Float64,Float64}};
+                                 angles::Dict{Tuple{Symbol,Symbol,Symbol},Float64}=Dict{Tuple{Symbol,Symbol,Symbol},Float64}())
+    #2-Body Bond Stretching
+    @inline canonical!(s1,s2) = s1 <= s2 ? (atom[s1], atom[s2]) : (atom[s2], atom[s1])
+    for e in eachindex(model.bonds)
+	    b = model.bonds[e]
+	    pair = canonical!(b.i, b.j)
+	    if haskey(bonds, pair)
+		    kL, kT = bonds[pair]
+		    model.bonds[e] = Phunny.Bond(b.i, b.j, b.R, b.r0, kL, kT)
+	    end
+    end
+
+    #3-Body Bond Bending
+    @inline function canonical_triplet(s1,s2,s3)
+        a,c = atom[s1], atom[s3]
+        a <= c ? (a, atom[s2], c) : (c, atom[s2], a)
+    end
+    for e in eachindex(model.angles)
+        ang = model.angles[e]
+        triplet = canonical_triplet(ang.i, ang.j, ang.k)
+        if haskey(angles, triplet)
+            model.angles[e] = Phunny.Angle(ang.i, ang.j, ang.k, ang.Rji, ang.Rjk, angles[triplet])
+        end
+    end
+    return model
 end
 
 #------------------------------------------------------#

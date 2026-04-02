@@ -1,8 +1,3 @@
-using Test, LinearAlgebra, StaticArrays, Sunny, Phunny
-
-# Load package
-#include(joinpath(@__DIR__, "../../src/Phunny.jl"))
-#using .Phunny
 let
     # -----------------------------
     # Build crystal & force model
@@ -14,10 +9,10 @@ let
     cryst = Crystal(L, fpos; types=types)
 
     cutoff = a*sqrt(3)/4
-    kL, kT = 75.0, 27.0
+    kL, kT = 75.0, 0.0
     model = Phunny.build_model(cryst; cutoff=cutoff, kL=kL, kT=kT)
     FCMs  = Phunny.assemble_force_constants!(model)
-    Phunny.enforce_asr!(FCMs, model.N)
+    
 
     # -----------------------------
     # Helpers
@@ -53,8 +48,10 @@ let
         # q in Cartesian
         qvec = Phunny.q_cartesian(cryst, q_rlu; basis=:rlu, cell=q_cell)
         
+        rvec = [model.lattice*model.fracpos[s] for s in 1:model.N]
         # phase per site
-        phase = [exp(im*dot(2π*qvec, model.fracpos[s])) for s in 1:model.N]
+        #phase = [exp(im*dot(2π*qvec, model.fracpos[s])) for s in 1:model.N]
+        phase = [exp(im*dot(qvec, rvec[s])) for s in 1:model.N]
 
         # Per-site DW factor at this q (same as onephonon_dsf)
         DWs = [exp(-0.5*dot(qvec, Matrix(Usite[s])*qvec)) for s in 1:model.N]
@@ -66,7 +63,7 @@ let
         A = 0.0
         for ν in eachindex(Eν)
             EmeV = Eν[ν]
-            EmeV <= 0 && continue
+            EmeV <= 0.5 && continue
             proj = 0.0 + 0.0im
             @inbounds for s in 1:model.N
                 i1 = 3s - 2; i2 = 3s - 1; i3 = 3s
@@ -87,7 +84,7 @@ let
     epsE    = 0.2                 # meV
     T_room  = 300.0
     η1, η2  = 0.3, 1.0            # meV
-    Emax    = 120.0               # meV
+    Emax    = 200.0               # meV
     ΔE      = 0.05                # meV
     Egrid   = collect(-Emax:ΔE:Emax)
 
@@ -131,7 +128,7 @@ let
         # Score each mode by its "area weight"
         weights = zeros(length(Eν))
         for ν in eachindex(Eν)
-            EmeV = Eν[ν]; EmeV <= 0 && (weights[ν]=0; continue)
+            EmeV = Eν[ν]; EmeV <= 0.5 && (weights[ν]=0; continue)
             nB = 1/(exp(EmeV/(Phunny.K_B_meV_per_K*T_room)) - 1)
             proj = 0.0
             for s in 1:model.N

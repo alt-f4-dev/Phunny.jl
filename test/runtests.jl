@@ -1,5 +1,8 @@
-using LinearAlgebra, StaticArrays, SparseArrays, Phunny, Sunny
+using LinearAlgebra, Statistics, StaticArrays, SparseArrays, Sunny
 using Test
+
+include(joinpath(@__DIR__, "../", "src/Phunny.jl"))
+using .Phunny
 
 # Silicon (diamond structure)
 a = 5.431
@@ -9,17 +12,15 @@ types = ["Si","Si"]
 cryst = Crystal(lat, pos; types) # Sunny func
 
 # Lookup masses and coherent scattering lengths
-mass  = mass_lookup(Symbol.(types)) 	     # Dict(String=>amu)
-bcoh  = bcoh_lookup(Symbol.(types))           # Vector per site (fm)
+mass = mass_lookup(Symbol.(types)) 	     # Dict(String=>amu)
+bcoh = bcoh_lookup(Symbol.(types))           # Vector per site (fm)
 
 # Springs (toy Si-like constants)
 kL = (i,j,rij)->175.0      # eV/Å^2
 kT = (i,j,rij)->127.0
 
-mdl = build_model(cryst; cutoff=2*a, use_sunny_radius=false,
-                         kL=kL, kT=kT)
-Φ   = assemble_force_constants!(mdl)
-enforce_asr!(Φ, mdl.N)
+mdl = build_model(cryst; cutoff=2*a, use_sunny_radius=false,kL=kL, kT=kT)
+Φ = assemble_force_constants!(mdl)
 
 # 4D DSF grid
 h = collect(range(-5.5, 5.5; length=101))
@@ -81,3 +82,4 @@ phonon_energies, phonon_vecs = phonons(mdl, Φ, @SVector[0.5,0.5,0.5]; q_basis=:
     include(joinpath(@__DIR__, "Validation", "DW-factor-test.jl"))
     include(joinpath(@__DIR__, "Validation", "onephonon-dsf-test.jl"))
 end
+print("Finished Tests!")

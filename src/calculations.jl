@@ -25,9 +25,9 @@ Builds real-space force constants `Φ` as a dictionary of 3×3 blocks keyed by `
 are basis-atoms indices and `R` is a lattice vector in fractional coordinates. This function does
 **not** mutate `model`.
 
-Bond Stretching Block: 
+Bond Stretching Blocks: 
 For each harmonic bond `b` with equilibrium vector `r₀ = b.r0`, longitudinal/tangential stiffness
-`(k_L, k_T) = (b.kL, b.kT)`, and unit direction `̂e = r₀/‖r0‖`; the force constant block is defined,
+`(kL, kT) = (b.kL, b.kT)`, and unit direction `̂e = r₀/‖r0‖`; the force constant block is defined,
 `K = kL*(êêᵀ) + kT*(I - êêᵀ)`, applied to the difference in displacements (uⱼ(R) - uᵢ(0)).
 
 Blocks are accumulated:
@@ -35,136 +35,101 @@ Blocks are accumulated:
     Φ[(i,j,+R)] += -K_b;        Φ[(j,i,-R)] += -K_b
     Φ[(i,i,0)]  += +K_b;        Φ[(j,j,0)]  += +K_b
 
-ensuring Newton's third law. 
+ensuring Newton's third law. Note, the transverse stiffness `kT = 0` unless the material is prestressed. 
 
-Types use StaticArrays: 
+Optional Bond Bending (angular) Blocks:
+The exact angular Hessian matrix `Φ = β*GGᵀ` has elements defined
 
-        keys → `Tuple{Int, Int, SVector{3,Int}}`
-        vals → `SMatrix{3,3,Float64,9}`
+    gi = -(ek - cosθ*ei)/(ri*sinθ)
+    gk = -(ei - cosθ*ek)/(rk*sinθ)
+    gj = -(gi + gk)
 
-Optional Bond-Angle (bending) Blocks:
-If `β_bend > 0`, additional 3-body contributions are added for triplets `(i,j,k)`, where `j`
-is the angle vertex and neighbors `(i,k)` are selected from same-cell bonds (`R==0`).
-
-The parameter `bend_shell` determines the bonding scheme:
-
-    - `:nn`  selects nearest-neighbor bonds with distance ≤ `(1 + bend_tol)*r_min`
-    - `:all` selects all neighbors
-
-else, a simple "second shell" cut-off is assumed. 
-
-For each pair of neighbors `rⱼᵢ`, `rⱼₖ` with norms `rᵢ` and `rₖ` and directions
-`̂eᵢ` and `̂eₖ`, define two projectors `Pᵢ = I - ̂eᵢ ̂eᵢᵀ` and `Pₖ = I - ̂eₖ ̂eₖᵀ`.
-
-Then, the angular block matrices are defined:
-
-    Bᵢ  = Pᵢ / rᵢ²;             Bₖ = Pₖ / rₖ²
-    Rᵢₖ = (Pᵢ Pₖ)/(rᵢ rₖ);      Rₖᵢ = Rᵢₖᵀ
-
-where each bending contribution scales with `β_bend` and is accumulated into on-site
-and cross blocks among atoms `i, j` and `k` as:
-
-    Φ[(i,i,0)] += β_bend*B_i
-    Φ[(k,k,0)] += β_bend*B_k
-    Φ[(j,j,0)] += β_bend*(B_i + B_k - R_ik - R_ki)
-
-    Φ[(i,j,0)] += β_bend*(-B_i + R_ik);        Φ[(j,i,0)] += β_bend*(-B_i + R_ki)
-    Φ[(j,k,0)] += β_bend*(-B_k + R_ki);        Φ[(k,j,0)] += β_bend*(-B_k + R_ik)
-    Φ[(i,k,0)] += β_bend*(-R_ik);              Φ[(k,i,0)] += β_bend*(-R_ki)
-
-Conservation laws are **not** enforced here and are enforced later by calling `enforce_asr!(Φ,model)`.
+where `Φₙₘ = β*gₘgₙᵀ` are the FCM elements and `β` is the angular stiffness. 
+Translational and rotational invariance are satisfied by construction.
 
 
 Returns
 
     - Φ::Dict{Tuple{Int,Int,SVector{3,Int}}, SMatrix{3,3,Float64,9}}
 
-Notes
-
-    - Units: `k_L`, `k_T`, and `β_bend` must be consistent with displacements in length units.
-    - Symmetry: both `(i,j,R)` and `(j,i,−R)` are filled for pair terms; bending uses `R=0`.
-
 """
-function assemble_force_constants!(model::Model; β_bend::Real=0.0, bend_shell::Symbol=:nn, bend_tol::Real=0.20)
+function assemble_force_constants!(model::Model)
+    #Force Constant Matrix Container
     Φ = Dict{Tuple{Int,Int,SVector{3,Int}}, SMatrix{3,3,Float64,9}}()
+    
+    #Identity Matrix (3×3)
     I3 = SMatrix{3,3,Float64,9}(I)
+    
+    #Self
+    Z = SVector{3,Int}(0,0,0)
 
-    for b in model.bonds
-        ê = b.r0 / norm(b.r0)
-        PL = ê*ê'
-        K  = b.kL*PL + b.kT*(I3 - PL)
-
-        key_ij = (b.i, b.j, b.R)
-        key_ji = (b.j, b.i, -b.R)
-        key_ii = (b.i, b.i, SVector{3,Int}(0,0,0))
-        key_jj = (b.j, b.j, SVector{3,Int}(0,0,0))
-
-        Φ[key_ij] = get(Φ, key_ij, zeros(SMatrix{3,3,Float64,9})) - K
-        Φ[key_ji] = get(Φ, key_ji, zeros(SMatrix{3,3,Float64,9})) - K
-        Φ[key_ii] = get(Φ, key_ii, zeros(SMatrix{3,3,Float64,9})) + K
-        Φ[key_jj] = get(Φ, key_jj, zeros(SMatrix{3,3,Float64,9})) + K
+    #Add (3×3) block matrix to Φ
+    @inline function _add!(key, M)
+        Φ[key] = get(Φ, key, zero(SMatrix{3,3,Float64,9})) + M
     end
-    if β_bend > 0
-        @inline function _add!(Φ, key, M)
-            Φ[key] = get(Φ, key, zero(SMatrix{3,3,Float64,9})) + M
-        end
-        neighbor = Dict{Int, Vector{Phunny.Bond{Float64}}}()
-        for b in model.bonds
-            neighbor[b.i] = get(neighbor, b.i, Phunny.Bond{Float64}[])
-            neighbor[b.j] = get(neighbor, b.j, Phunny.Bond{Float64}[])
-            if b.i != b.j
-                push!(neighbor[b.i], b); push!(neighbor[b.j], Phunny.Bond{Float64}(b.j,b.i,-b.R,-b.r0,b.kL,b.kT))
-            end
-        end
 
-        for (j, nb) in neighbor
-            L = length(nb); L < 2 && continue
-            dists = [norm(b.r0) for b in nb]; rmin = minimum(dists)
-            sel = if bend_shell == :nn
-                [idx for (idx, d) in enumerate(dists) if d ≤ (1.0 + bend_tol)*rmin]
-            elseif bend_shell == :all
-                eachindex(nb)
-            else 
-                [idx for (idx, d) in enumerate(dists) if d > (1.0 + bend_tol)*rmin] #simple second shell
-            end
-            length(sel) < 2 && continue
+    #2-Body Bond Stretching
+    for b in model.bonds
+        ê = b.r0 / norm(b.r0) #unit bond direction
+        PL = ê*ê'             #longitudinal projector
+        
+        #2-body force constant
+        K = b.kL*PL + b.kT*(I3 - PL)
+        
+        #Off-diagonal blocks
+        _add!((b.i, b.j, +b.R), -K)
+        _add!((b.j, b.i, -b.R), -K)
+        
+        #Diagonal blocks
+        _add!((b.i, b.i, Z), +K)
+        _add!((b.j, b.j, Z), +K)
 
-            for a = 1:length(sel)-1, b = a+1:length(sel)
-                
-                ba = nb[sel[a]]; bb = nb[sel[b]]; i, k = ba.j, bb.j
-                rji = ba.r0; rjk = bb.r0; ri = norm(rji); rk = norm(rjk)
-                ei = rji/ri; ek = rjk/rk; Pi = I3 - ei*ei'; Pk = I3 - ek*ek'
+    end
 
-                Bi = Pi/(ri^2); Bk = Pk/(rk^2) 
-                Rik = (Pi*Pk)/(ri*rk); Rki = Rik'
+    #3-Body Bond Bending
+    L = model.lattice; fp = model.fracpos
+    for ang in model.angles
+        ang.β == 0 && continue
+        i,j,k,β = ang.i, ang.j, ang.k, ang.β
+        
+        #equilibrium bond vecors from lattice geometry
+        rji = L*(fp[i] .+ SVector{3,Float64}(ang.Rji) .- fp[j])
+        rjk = L*(fp[k] .+ SVector{3,Float64}(ang.Rjk) .- fp[j])
 
-                key_ii = (i,i,SVector{3,Int}(0,0,0)) 
-                key_jj = (j,j,SVector{3,Int}(0,0,0)) 
-                key_kk = (k,k,SVector{3,Int}(0,0,0))
-                
-                key_ij = (i,j,SVector{3,Int}(0,0,0)); key_ji = (j,i,SVector{3,Int}(0,0,0)) 
-                key_jk = (j,k,SVector{3,Int}(0,0,0)); key_kj = (k,j,SVector{3,Int}(0,0,0))
-                key_ik = (i,k,SVector{3,Int}(0,0,0)); key_ki = (k,i,SVector{3,Int}(0,0,0))
-                
-                _add!(Φ, key_ii, β_bend*Bi)
-                _add!(Φ, key_kk, β_bend*Bk)
-                _add!(Φ, key_jj, β_bend*(Bi + Bk - Rik - Rki))
+        #unit directions
+        ri = norm(rji); rk = norm(rjk)
+        ei = rji / ri ; ek = rjk / rk
 
-                _add!(Φ, key_ij, β_bend*(-Bi + Rik))
-                _add!(Φ, key_ji, β_bend*(-Bi + Rki))
-                _add!(Φ, key_jk, β_bend*(-Bk + Rki))
-                _add!(Φ, key_kj, β_bend*(-Bk + Rik))
+        #equilibrium angle
+        cosθ = dot(ei,ek)
+        sinθ = sqrt(max(1.0 - cosθ^2, 0.0))
+        sinθ < 1e-12 && continue #collinear triplet
 
-                _add!(Φ, key_ik, β_bend*(-Rik))
-                _add!(Φ, key_ki, β_bend*(-Rki))
-            end
-        end
+        #g-vector basis
+        gi = -(ek - cosθ*ei)/(ri*sinθ)
+        gk = -(ei - cosθ*ek)/(rk*sinθ)
+        gj = -(gi + gk)
+
+        #Diagonal blocks
+        _add!((i,i,Z), β*(gi*gi'))
+        _add!((j,j,Z), β*(gj*gj'))
+        _add!((k,k,Z), β*(gk*gk'))
+
+        #Off-diagonal blocks
+        Φij = β*(gi*gj'); Φjk = β*(gj*gk'); Φik = β*(gi*gk')
+
+        _add!((i,j, -ang.Rji), Φij)
+        _add!((j,i, +ang.Rji), Φij')
+        _add!((j,k, +ang.Rjk), Φjk)
+        _add!((k,j, -ang.Rjk), Φjk')
+        _add!((i,k, ang.Rjk - ang.Rji), Φik)
+        _add!((k,i, ang.Rji - ang.Rjk), Φik')
     end
     return Φ
 end
 #-----------------------------------------------#
 #               Acoustic Sum Rule               #
-#                                               #
+#                                               # This should likely be moved or removed. 
 # Symmetry Constraint: Translational Invariance #
 #-----------------------------------------------# 
 """
@@ -172,6 +137,7 @@ end
 
 Acoustic sum rule: for each atom i, ∑_{j,R} Φ_{i j}(R) = 0.
 Adjust on-site blocks to satisfy translational invariance.
+This function is not required and should be used for sanity checks.
 """
 function enforce_asr!(Φ::Dict{Tuple{Int,Int,SVector{3,Int}}, SMatrix{3,3,Float64,9}}, N::Int)
     for i in 1:N
@@ -436,7 +402,8 @@ Note, `:hessian` method requires that `nhat` is provided and works only at `q = 
 """
 function group_velocity(
         model::Model, Φ, q::SVector{3,Float64}; 
-        cryst=nothing, nhat=nothing, dq::Float64 = 1e-3)
+        cryst=nothing, nhat=nothing, dq::Float64 = 1e-3,
+        method::Symbol=:gradient)
     if method === :gradient #∂D/∂q perturbation theory
         N3 = 3*model.N
         dD = zeros(ComplexF64, N3, N3)
@@ -444,12 +411,12 @@ function group_velocity(
         v = zeros(Float64, N3)
 
         nh = nhat === nothing ? q/norm(q) : nhat
-        compute_group_velocities(v, dDx, dDy, dDz, dD, model, Φ, q, nh; cryst=cryst)
+        compute_group_velocities!(v, dDx, dDy, dDz, dD, model, Φ, q, nh; cryst=cryst)
         return v
     elseif method === :hessian #Γ-limit curvature
         iszero(norm(q)) || error(":hessian method only valid at Γ (q = 0)!")
         nhat === nothing && error(":hessian method requires nhat!")
-        return dynamical_hessian(model, Φ, nhat; cryst=cryst)
+        return dynamical_hessian!(model, Φ, nhat; cryst=cryst)
     elseif method === :fd #finite-difference (diagnostic)
         @warn "Finite-difference group velocities are diagnostic only!"
         nh = nhat === nothing ? q/norm(q) : nhat
@@ -484,10 +451,9 @@ function msd_from_phonons(model::Model, Φ;
     msd_A2 = zeros(Float64, N)   # accumulate in Å^2
 
     for iz in 0:nz-1, iy in 0:ny-1, ix in 0:nx-1
-        q_rlu = @SVector[ix/nx, iy/ny, iz/nz]
+        q_rlu = @SVector[(ix+0.5)/nx, (iy+0.5)/ny, (iz+0.5)/nz]
         Eν, Evec = phonons(model, Φ, q_rlu; q_basis=:rlu, q_cell=q_cell, cryst=cryst)
-        ν_start = (ix==0 && iy==0 && iz==0) ? 4 : 1
-        for ν in ν_start:length(Eν)
+        for ν in 1:length(Eν)
             EmeV = Eν[ν]
             EmeV <= eps_meV && continue
             x = EmeV / (2*K_B_meV_per_K*T)
@@ -557,12 +523,11 @@ function U_from_phonons(model::Model, Φ;
     nx, ny, nz = qgrid
     Nq = nx*ny*nz
     U = [zeros(SMatrix{3,3,Float64,9}) for _ in 1:N]
-
+    #Calculate U
     for iz in 0:nz-1, iy in 0:ny-1, ix in 0:nx-1
         q_rlu = @SVector[(ix+0.5)/nx, (iy+0.5)/ny, (iz+0.5)/nz] #center-shifted
         Eν, Evec = phonons(model, Φ, q_rlu; q_basis=:rlu, q_cell=q_cell, cryst=cryst)
-        ν_start = (ix==0 && iy==0 && iz==0) ? 4 : 1
-        for ν in ν_start:length(Eν)
+        for ν in 1:length(Eν)
             EmeV = Eν[ν]
             EmeV <= eps_meV && continue
             x = EmeV / (2*K_B_meV_per_K*T)
@@ -575,11 +540,13 @@ function U_from_phonons(model::Model, Φ;
                 t21 = (e2*conj(e1)); t22 = (e2*conj(e2)); t23 = (e2*conj(e3))
                 t31 = (e3*conj(e1)); t32 = (e3*conj(e2)); t33 = (e3*conj(e3))
                 #Mass-weighted polarization tensor
-                Tmat = @SMatrix[t11 t12 t13; t21 t22 t23; t31 t32 t33] #./ model.mass[s]
+                Tmat = @SMatrix[t11 t12 t13; t21 t22 t23; t31 t32 t33]
                 U[s] += (MSD_PREF_A2 * cothx / EmeV) * real.(Tmat)
             end
         end
-    end#Ensure U is symmetric and normalized
+    end
+
+    #Ensure U is symmetric and normalized
     for s in 1:N
         U[s] = U[s] ./ Nq
 	U[s] = (U[s] + U[s]')/2
@@ -648,7 +615,8 @@ function onephonon_dsf(model::Model, Φ, q::SVector{3,Float64}, Evals::AbstractV
                         T::Real=300.0, bcoh=nothing, η::Real=0.5, mass_unit::Symbol=:amu,
                         q_basis::Symbol=:cart, q_cell::Symbol=:primitive, cryst=nothing,
                         dw_qgrid::NTuple{3,Int}=(16,16,16), _U_internal::Union{Nothing,Vector{SMatrix{3,3,Float64,9}}}=nothing,
-			iso_by_site::Union{Nothing,Dict{Int,Int}}=nothing, iso_by_species::Union{Nothing,Dict{Symbol,Int}}=nothing)
+			iso_by_site::Union{Nothing,Dict{Int,Int}}=nothing, iso_by_species::Union{Nothing,Dict{Symbol,Int}}=nothing,
+                        eps_meV::Real=0.5)
 
     #Number of particles per unit cell & mass
     N = model.N; M = model.mass
@@ -661,9 +629,13 @@ function onephonon_dsf(model::Model, Φ, q::SVector{3,Float64}, Evals::AbstractV
 
     #Resolve momentum/position units & precompile phase info
     qvec = q_basis === :cart ? q : q_cartesian(cryst, q; basis=:rlu, cell=q_cell)
-    rvec = q_basis === :cart ? [model.lattice*model.fracpos[s] for s in 1:N] : [model.fracpos[s] for s in 1:N]
-    phase = q_basis === :cart ? [exp(im*dot(qvec, rvec[s])) for s in 1:N] : [exp(im*dot(2π*qvec, rvec[s])) for s in 1:N]
+    #rvec = q_basis === :cart ? [model.lattice*model.fracpos[s] for s in 1:N] : [model.fracpos[s] for s in 1:N]
+    #phase = q_basis === :cart ? [exp(im*dot(qvec, rvec[s])) for s in 1:N] : [exp(im*dot(2π*qvec, rvec[s])) for s in 1:N]
     
+    rvec = [model.lattice*model.fracpos[s] for s in 1:N]
+    phase = [exp(im*dot(qvec, rvec[s])) for s in 1:N]
+
+
     #Calculate anisotropic Debye-Waller
     U = _U_internal === nothing ? U_from_phonons(model, Φ; T=T, cryst=cryst, qgrid=dw_qgrid, q_cell=q_cell) : _U_internal
     DW = [exp(-0.5*dot(qvec, U[s]*qvec)) for s in 1:N]
@@ -680,7 +652,7 @@ function onephonon_dsf(model::Model, Φ, q::SVector{3,Float64}, Evals::AbstractV
     Sω = zeros(Float64, length(Evals))
     for ν in 1:length(Eν)
         EmeV = Eν[ν]
-        EmeV <= 0 && continue
+        EmeV <= eps_meV && continue
         
         #Coherent scattering amplitude
         Aq = 0.0 + 0.0im
@@ -736,7 +708,8 @@ function onephonon_dsf_4d(model::Model, Φ,
                           T::Real=300.0, η::Real=0.5, mass_unit::Symbol=:amu, bcoh=nothing,
                           threads::Bool=true, dw_qgrid::NTuple{3,Int}=(12,12,12),
 			  iso_by_site::Union{Nothing,Dict{Int,Int}}=nothing, 
-			  iso_by_species::Union{Nothing,Dict{Symbol,Int}}=nothing)
+			  iso_by_species::Union{Nothing,Dict{Symbol,Int}}=nothing,
+                          eps_meV::Real=0.5)
 
     n1, n2, n3, nE = length(q1), length(q2), length(q3), length(Evals)
     S4 = zeros(Float64, n1, n2, n3, nE)
@@ -772,7 +745,7 @@ function onephonon_dsf_4d(model::Model, Φ,
         end
         Sq = onephonon_dsf(model, Φ, qcart, Evals; T=T, bcoh=bw,
                            η=η, mass_unit=mass_unit, q_basis=:cart, cryst=cryst,
-                           dw_qgrid=dw_qgrid, _U_internal=U)
+                           dw_qgrid=dw_qgrid, _U_internal=U, eps_meV=eps_meV)
         @inbounds S4[i, j, k, :] .= Sq
         return nothing
     end

@@ -62,8 +62,8 @@ function validate_summary(model::Model, Φ; cryst=nothing, qpath_rlu=nothing, T=
 
     # Sound speeds along axes
     dirs = [@SVector[1.0,0,0], @SVector[0,1.0,0], @SVector[0,0,1.0]]
-    out[:sound_speeds_mps] = sound_speeds(model, Φ, dirs; cryst=cryst)
-
+    #out[:sound_speeds_mps] = sound_speeds(model, Φ, dirs; cryst=cryst)
+    out[:group_velocities] = group_velocity(model, Φ, @SVector[1.0, 0.0, 0.0]; cryst=cryst, nhat=nothing, dq=1e-3)
     return out
 end
 

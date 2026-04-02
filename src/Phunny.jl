@@ -13,8 +13,8 @@ using LinearAlgebra, SparseArrays, StaticArrays
 export Model, Bond, build_model, neighbor_bonds_cutoff, neighbor_bonds_from_sunny
 export assemble_force_constants!, assign_force_constants!, enforce_asr!
 
-export dynamical_matrix, dynamical_gradient!, dynamical_hessian!
-export phonons, group_velocities, msd_from_phonons, B_isotropic_from_phonons, U_from_phonons
+export dynamical_matrix, dynamical_gradient!, dynamical_hessian!, group_velocity
+export phonons, group_velocities, msd_from_phonons, U_from_phonons
 export onephonon_dsf, onephonon_dsf_4d
 
 export make_physical!, longitudinal_weights!
@@ -40,8 +40,5 @@ include("systests.jl")
 # Developer API
 #-------------------
 
-export AutoTargets, fit_per_pair!
-
-include("ForceConstantSearch.jl")
 
 end # module Phunny
