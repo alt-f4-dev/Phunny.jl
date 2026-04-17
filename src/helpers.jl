@@ -325,7 +325,6 @@ function build_model(crystal; mass=:lookup, isotopes_by_site=nothing, isotopes_b
         collect(Float64.(mass))
     end
 
-    #@assert length(fpos) == length(species) == length(mass)
     
     bonds = nothing
     if neighbors_sunny !== nothing

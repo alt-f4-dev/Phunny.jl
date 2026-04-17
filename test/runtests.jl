@@ -32,7 +32,7 @@ T = 150.0
 
 S4 = onephonon_dsf_4d(mdl, Φ, h, k, l, E;
                              q_basis=:rlu, q_cell=:primitive,
-                             cryst=cryst, T=T, η=η,
+                             cryst=cryst, T=T, σ=η,
                              mass_unit=:amu, bcoh=bcoh, threads=false)
 
 # Unit tests

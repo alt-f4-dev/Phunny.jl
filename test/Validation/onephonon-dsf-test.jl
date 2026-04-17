@@ -49,8 +49,8 @@ let
         qvec = Phunny.q_cartesian(cryst, q_rlu; basis=:rlu, cell=q_cell)
         
         rvec = [model.lattice*model.fracpos[s] for s in 1:model.N]
+        
         # phase per site
-        #phase = [exp(im*dot(2π*qvec, model.fracpos[s])) for s in 1:model.N]
         phase = [exp(im*dot(qvec, rvec[s])) for s in 1:model.N]
 
         # Per-site DW factor at this q (same as onephonon_dsf)
@@ -102,7 +102,7 @@ let
     @testset "S1: Area equals analytic sum over modes" begin
         q = q1
         Sη = Phunny.onephonon_dsf(model, FCMs, q, Egrid;
-                                   T=T_room, η=η1, mass_unit=:amu,
+                                   T=T_room, σ=η1, mass_unit=:amu,
                                    q_basis=:rlu, q_cell=:conventional, cryst=cryst,
                                    dw_qgrid=qgrid_U, _U_internal=Usite)
 
@@ -113,10 +113,10 @@ let
         #If minimum(Egrid) >= 0, then A_num = 0.5*A_th (due to absence of anti-Stokes term) 
     end
 
-    @testset "S2: Peak location matches phonon energy (narrow η)" begin
+    @testset "S2: Peak location matches phonon energy (narrow σ)" begin
         q = q1
         Sη = Phunny.onephonon_dsf(model, FCMs, q, Egrid;
-                                   T=T_room, η=η1, mass_unit=:amu,
+                                   T=T_room, σ=η1, mass_unit=:amu,
                                    q_basis=:rlu, q_cell=:conventional, cryst=cryst,
                                    dw_qgrid=qgrid_U, _U_internal=Usite)
 
@@ -146,17 +146,17 @@ let
         kmax = argmax(Sη)
         Epeak_num = Egrid[kmax]
 
-        @test isapprox(Epeak_num, Epeak_th; atol=3η1)  # allow a few η of uncertainty on grid
+        @test isapprox(Epeak_num, Epeak_th; atol=3η1)  # allow a few σ of uncertainty on grid
     end
 
     @testset "S3: Area is independent of η" begin
         q = q1
         Sηa = Phunny.onephonon_dsf(model, FCMs, q, Egrid;
-                                    T=T_room, η=η1, mass_unit=:amu,
+                                    T=T_room, σ=η1, mass_unit=:amu,
                                     q_basis=:rlu, q_cell=:conventional, cryst=cryst,
                                     dw_qgrid=qgrid_U, _U_internal=Usite)
         Sηb = Phunny.onephonon_dsf(model, FCMs, q, Egrid;
-                                    T=T_room, η=η2, mass_unit=:amu,
+                                    T=T_room, σ=η2, mass_unit=:amu,
                                     q_basis=:rlu, q_cell=:conventional, cryst=cryst,
                                     dw_qgrid=qgrid_U, _U_internal=Usite)
         A1 = trapz_uniform(Sηa, ΔE)
@@ -191,7 +191,7 @@ let
         q = q1
         # With computed U
         Swith = Phunny.onephonon_dsf(model, FCMs, q, Egrid;
-                                      T=T_room, η=η1, mass_unit=:amu,
+                                      T=T_room, σ=η1, mass_unit=:amu,
                                       q_basis=:rlu, q_cell=:conventional, cryst=cryst,
                                       dw_qgrid=qgrid_U, _U_internal=Usite)
         Awith = trapz_uniform(Swith, ΔE)
@@ -199,7 +199,7 @@ let
         # With DW artificially turned off by injecting zero U tensors
         Uzero = [zeros(SMatrix{3,3,Float64,9}) for _ in 1:model.N]
         SwoDW = Phunny.onephonon_dsf(model, FCMs, q, Egrid;
-                                      T=T_room, η=η1, mass_unit=:amu,
+                                      T=T_room, σ=η1, mass_unit=:amu,
                                       q_basis=:rlu, q_cell=:conventional, cryst=cryst,
                                       dw_qgrid=qgrid_U, _U_internal=Uzero)
         AwoDW = trapz_uniform(SwoDW, ΔE)

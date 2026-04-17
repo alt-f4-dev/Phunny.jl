@@ -464,7 +464,7 @@ function msd_from_phonons(model::Model, Φ;
                 #Mass-weighted eigenvector components
                 e1 = Evec[i1, ν]; e2 = Evec[i2, ν]; e3 = Evec[i3, ν]
                 #Mass-weighted square amplitude
-                amp2 = (abs2(e1) + abs2(e2) + abs2(e3)) #/ model.mass[s]
+                amp2 = (abs2(e1) + abs2(e2) + abs2(e3)) 
                 #Mean-square Displacement
                 msd_A2[s] += MSD_PREF_A2 * cothx * amp2 / EmeV
             end
@@ -602,23 +602,23 @@ end
 #                                                       #
 #-------------------------------------------------------#
 """
-    onephonon_dsf(model, Φ, q, Evals; T=300.0, bcoh=nothing, η=0.5, mass_unit=:amu, q_basis=:cart, q_cell=:primitive, cryst=nothing)
+    onephonon_dsf(model, Φ, q, Evals; T=300.0, bcoh=nothing, σ=0.5, mass_unit=:amu, q_basis=:cart, q_cell=:primitive, cryst=nothing)
 
 Computes one-phonon coherent S(q,E) on energy grid `Evals` (meV).
 - Debye–Waller is intrinsic: full anisotropic tensors U_s(T) are computed from the phonon spectrum.
 - `bcoh` optional Vector of coherent scattering lengths (length N)
-- `η` Gaussian HWHM for energy broadening (meV)
+- `σ` Gaussian standard deviation (spread) for energy broadening (meV)
 - `mass_unit` :amu or :kg (Model.mass is assumed to be :amu typically)
 - `q_basis`/`q_cell`/`cryst` follow `phonons` conventions
 Returns S(E) (arbitrary but consistent units).
 """
 function onephonon_dsf(model::Model, Φ, q::SVector{3,Float64}, Evals::AbstractVector{<:Real};
-                        T::Real=300.0, bcoh=nothing, η::Real=0.5, mass_unit::Symbol=:amu,
+                        T::Real=300.0, bcoh=nothing, σ::Real=0.5, mass_unit::Symbol=:amu,
                         q_basis::Symbol=:cart, q_cell::Symbol=:primitive, cryst=nothing,
                         dw_qgrid::NTuple{3,Int}=(16,16,16), _U_internal::Union{Nothing,Vector{SMatrix{3,3,Float64,9}}}=nothing,
 			iso_by_site::Union{Nothing,Dict{Int,Int}}=nothing, iso_by_species::Union{Nothing,Dict{Symbol,Int}}=nothing,
                         eps_meV::Real=0.01)
-
+    
     #Number of particles per unit cell & mass
     N = model.N; M = model.mass
 
@@ -657,33 +657,34 @@ function onephonon_dsf(model::Model, Φ, q::SVector{3,Float64}, Evals::AbstractV
     Sω = zeros(Float64, length(Evals))
     for ν in 1:length(Eν)
         EmeV = Eν[ν]
-        #EmeV <= eps_meV && continue
         EmeV ≤ eps_meV_q && continue
         
         #Coherent scattering amplitude
         Aq = 0.0 + 0.0im
         for s in 1:N
             i1 = 3s - 2; i2 = 3s - 1; i3 = 3s
-            # mass-weighted polarization
+            #Mass-weighted polarization
 	    e1 = Evec[i1, ν]; e2 = Evec[i2, ν]; e3 = Evec[i3, ν]
             qdot = qvec[1]*e1 + qvec[2]*e2 + qvec[3]*e3
-            Aq += ( (bw[s] * DW[s] * qdot) / sqrt(2*EmeV))*phase[s]#sqrt(2 * Mamu[s] * EmeV) )*phase[s]
+            Aq += ( (bw[s] * DW[s] * qdot) / sqrt(2*EmeV))*phase[s]
         end
+
         #Squared Amplitude (Intensity)
         Iq = abs2(Aq)
 
-        # Fraction of +ω Gaussian captured
-        ωfracp = 0.5 * (_erf((Emax - EmeV) / (sqrt(2)*η)) - _erf((Emin - EmeV) / (sqrt(2)*η)))
-        # Fraction of -ω Gaussian captured
-        ωfracm = 0.5 * (_erf((Emax + EmeV) / (sqrt(2)*η)) - _erf((Emin + EmeV) / (sqrt(2)*η)))
+        # Fraction of ±ω Gaussian captured
+        ωfracp = 0.5 * (_erf((Emax - EmeV) / (sqrt(2)*σ)) - _erf((Emin - EmeV) / (sqrt(2)*σ)))
+        ωfracm = 0.5 * (_erf((Emax + EmeV) / (sqrt(2)*σ)) - _erf((Emin + EmeV) / (sqrt(2)*σ)))
 
-        #Calculate scattering intensity
+        #Ensure that ωₙ ∈ [0,ω] : ω ≠ 0
         ωfracp > 1e-12 || continue; np = nB[ν] + 1.0; nm = nB[ν]
+
+        #Calculate one-phonon DSF S(⃗qₙ,ω) @ fixed ⃗qₙ
         @inbounds @simd for k in eachindex(Evals)
             E = Evals[k]
-            Sω[k] += Iq * np * exp(-((E - EmeV)^2)/(2η^2)) / (sqrt(2π)*η) / ωfracp
+            Sω[k] += Iq * np * exp(-((E - EmeV)^2)/(2σ^2)) / (sqrt(2π)*σ) / ωfracp
             if Emin < 0.0 && ωfracm > 1e-12
-                Sω[k] += Iq * nm * exp(-((E + EmeV)^2)/(2η^2)) / (sqrt(2π)*η) / ωfracm
+                Sω[k] += Iq * nm * exp(-((E + EmeV)^2)/(2σ^2)) / (sqrt(2π)*σ) / ωfracm
             end
         end
     end
@@ -693,9 +694,9 @@ end
 # 4D S(q, w) over a Cartesian or RLU grid #
 #-----------------------------------------#
 """
-    onephonon_dsf_4d(model, Φ, q1, q2, q3, Evals;
+    onephonon_dsf_4d(model, Φ, q1, q2, q3, ωaxis;
                      q_basis=:rlu, q_cell=:primitive, cryst=nothing,
-                     T=300.0, η=0.5, mass_unit=:amu, bcoh=nothing,
+                     T=300.0, σ=0.5, mass_unit=:amu, bcoh=nothing,
                      threads=true)
 
 Compute the one-phonon coherent dynamic structure factor on a **4D grid**:
@@ -703,21 +704,21 @@ Compute the one-phonon coherent dynamic structure factor on a **4D grid**:
 - `q1, q2, q3` are 1D axes defining a rectilinear grid in q-space.
   - If `q_basis=:rlu`, they are fractional coordinates along the three reciprocal basis vectors.
   - If `q_basis=:cart`, they are Cartesian components (Å⁻¹).
-- `Evals` is the 1D energy axis (meV). Result has shape `(length(q1), length(q2), length(q3), length(Evals))`.
+- `ωaxis` is the 1D energy axis (meV). Result has shape `(length(q1), length(q2), length(q3), length(ωaxis))`.
 
-This routine is thread-parallel over the q-grid to mitigate the O(N^3) complexity.
+This routine is thread-parallel over the q-grid by default to mitigate the O(N^3) complexity.
 """
 function onephonon_dsf_4d(model::Model, Φ,
                           q1::AbstractVector, q2::AbstractVector, q3::AbstractVector,
-                          Evals::AbstractVector;
+                          ωaxis::AbstractVector;
                           q_basis::Symbol=:rlu, q_cell::Symbol=:primitive, cryst=nothing,
-                          T::Real=300.0, η::Real=0.5, mass_unit::Symbol=:amu, bcoh=nothing,
+                          T::Real=300.0, σ::Real=0.5, mass_unit::Symbol=:amu, bcoh=nothing,
                           threads::Bool=true, dw_qgrid::NTuple{3,Int}=(12,12,12),
 			  iso_by_site::Union{Nothing,Dict{Int,Int}}=nothing, 
 			  iso_by_species::Union{Nothing,Dict{Symbol,Int}}=nothing,
                           eps_meV::Real=0.01)
 
-    n1, n2, n3, nE = length(q1), length(q2), length(q3), length(Evals)
+    n1, n2, n3, nE = length(q1), length(q2), length(q3), length(ωaxis)
     S4 = zeros(Float64, n1, n2, n3, nE)
 
     # Precompute anisotropic Debye–Waller tensors once (Å^2)
@@ -748,8 +749,8 @@ function onephonon_dsf_4d(model::Model, Φ,
             v = G * SVector{3,Float64}(h,kk,l)
             SVector{3,Float64}(v)
         end
-        Sq = onephonon_dsf(model, Φ, qcart, Evals; T=T, bcoh=bw,
-                           η=η, mass_unit=mass_unit, q_basis=:cart, cryst=cryst,
+        Sq = onephonon_dsf(model, Φ, qcart, ωaxis; T=T, bcoh=bw,
+                           σ=σ, mass_unit=mass_unit, q_basis=:cart, cryst=cryst,
                            dw_qgrid=dw_qgrid, _U_internal=U, eps_meV=eps_meV)
         @inbounds S4[i, j, k, :] .= Sq
         return nothing
