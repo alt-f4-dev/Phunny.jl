@@ -16,6 +16,7 @@ export assemble_force_constants!, assign_force_constants!
 
 export dynamical_matrix, dynamical_gradient!, dynamical_hessian!
 export phonons, group_velocity, msd_from_phonons, U_from_phonons
+export ForceConstantBasis, dynamical_matrices, mode_amplitude, HBAR2_AMU_A2
 export onephonon_dsf, onephonon_dsf_4d
 
 export make_physical!, longitudinal_weights!

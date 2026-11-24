@@ -34,9 +34,10 @@ end
 # Neighbor/bond construction #
 #----------------------------#
 """
-    neighbor_bonds_cutoff(lattice, fracpos; cutoff, kL, kT, supercell=(1,1,1))
+    neighbor_bonds_cutoff(lattice, fracpos; cutoff, kL, kT, supercell=nothing)
 
-Construct bonds using a radial cutoff by scanning a small supercell (portable path).
+Construct bonds using a radial cutoff (portable path). Every lattice offset that can hold a neighbour within
+`cutoff` is scanned; an explicit `supercell` only widens the scan.
 `kL` and `kT` can be numbers or functions `(i,j,rij)->stiffness` for non-uniform springs.
 Returns `Vector{Bond}`.
 """
@@ -45,8 +46,12 @@ function neighbor_bonds_cutoff(lattice::SMatrix{3,3,Float64,9},
                                cutoff::Real,
                                kL::Union{Real,Function}=1.0,
                                kT::Union{Real,Function}=1.0,
-                               supercell::NTuple{3,Int}=(1,1,1))
-    S = SVector{3,Int}(supercell)
+                               supercell::Union{Nothing,NTuple{3,Int}}=nothing)
+    # Lattice offsets to scan: every cell that can hold a neighbour within `cutoff` (plane spacing dₖ = V/|aᵢ × aⱼ|).
+    # An explicit `supercell` scans -(S÷2):(S÷2) along each axis when that reaches further.
+    V = abs(det(lattice))
+    reach = ntuple(k -> ceil(Int, cutoff / (V / norm(cross(lattice[:, mod1(k + 1, 3)], lattice[:, mod1(k + 2, 3)])))) + 1, 3)
+    S = SVector{3,Int}(supercell === nothing ? 2 .* reach : max.(supercell, 2 .* reach))
     N = length(fracpos)
     bonds = Bond{Float64}[]
     cutoff2 = cutoff^2
@@ -73,7 +78,8 @@ function neighbor_bonds_cutoff(lattice::SMatrix{3,3,Float64,9},
         if b.i == b.j && b.R == SVector{3,Int}(0,0,0)
             keep[idx] = false; continue
         end
-        if b.i > b.j || (b.i == b.j && any(b.R .< 0))
+        # keep one of each (i, j, R) / (j, i, −R) pair: i < j, or i == j with the first nonzero component of R positive
+        if b.i > b.j || (b.i == b.j && first(filter(!iszero, b.R)) < 0)
             keep[idx] = false
         end
     end
@@ -130,7 +136,8 @@ function neighbor_bonds_from_sunny(cryst, bonds;
         if b.i == b.j && b.R == SVector{3,Int}(0,0,0)
             keep[idx] = false; continue
         end
-        if b.i > b.j || (b.i == b.j && any(b.R .< 0))
+        # keep one of each (i, j, R) / (j, i, −R) pair: i < j, or i == j with the first nonzero component of R positive
+        if b.i > b.j || (b.i == b.j && first(filter(!iszero, b.R)) < 0)
             keep[idx] = false
         end
     end
@@ -352,6 +359,7 @@ function assign_force_constants!(model::Model, atom::Dict{Int,Symbol},
     for e in eachindex(model.bonds)
 	    b = model.bonds[e]
 	    pair = canonical!(b.i, b.j)
+	    pair = haskey(bonds, pair) ? pair : reverse(pair)   # either order of the species pair is accepted
 	    if haskey(bonds, pair)
 		    kL, kT = bonds[pair]
 		    model.bonds[e] = Phunny.Bond(b.i, b.j, b.R, b.r0, kL, kT)

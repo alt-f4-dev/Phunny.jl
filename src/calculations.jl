@@ -329,16 +329,26 @@ end
 Diagonalizes the mass-weighted dynamic matrix D(q). Returns (eigvals, eigvecs) with **energies in meV** and a 3N×3N 
 block matrix with columns defined by the mass-weighted eigenvectors (phonon polarization vectors).
 
+Conventions. The dynamical matrix uses the phase exp(iq·(r_j + R − r_i)) of the atom positions, so the
+displacement of atom κ in cell R is ∝ e_κ(q) exp(iq·(R + τ_κ))/√M_κ. D(−q) = D(q)*, so e(−q) = e(q)* is a
+valid gauge for the modes at −q (needed when building boson Hamiltonians that couple q and −q). Inside a
+degenerate subspace the eigenvectors are an arbitrary orthonormal basis.
+
+By default an unstable mode (ω² < 0) is reported as zero energy, which cannot be told from an acoustic mode at
+Γ; pass `signed=true` to get −√|ω²| for it instead.
+
 The wavevector `q` may be in Cartesian Å⁻¹ (`q_basis=:cart`) or relative lattice untis (R.L.U.) (`q_basis=:rlu` with `q_cell=:primitive` or `:conventional`).
 
 If passing RLU, also pass the underlying crystal `cryst` via keyword.
 """
-function phonons(model::Model, Φ, q::SVector{3,Float64}; q_basis::Symbol=:cart, q_cell::Symbol=:primitive, cryst=nothing)
+function phonons(model::Model, Φ, q::SVector{3,Float64}; q_basis::Symbol=:cart, q_cell::Symbol=:primitive, cryst=nothing,
+                 signed::Bool=false)
     q_cart = q_basis === :cart ? q : (cryst === nothing ? error("cryst required for q_basis=:rlu") : q_cartesian(cryst, q; basis=:rlu, cell=q_cell))
     Dq = dynamical_matrix(model, Φ, q_cart)
     vals, vecs = eigen(Dq)
-    ω2 = max.(real(vals), 0.0)
-    ω  = sqrt.(ω2)                    # internal sqrt(k/m) units
+    ω2 = real(vals)
+    # internal sqrt(k/m) units; with `signed`, an unstable mode (ω² < 0) is returned as −√|ω²| instead of 0
+    ω  = signed ? sign.(ω2) .* sqrt.(abs.(ω2)) : sqrt.(max.(ω2, 0.0))
     E  = ALPHA_meV .* ω               # energies in meV (ℏω)
     perm = sortperm(E)
     return E[perm], vecs[:,perm]
@@ -779,3 +789,94 @@ end
 
 
 
+
+
+#----------------------------------------#
+# Linear force-constant basis and helpers #
+#----------------------------------------#
+
+"""ħ²/(amu Å²) in meV: the scale of zero-point displacements."""
+const HBAR2_AMU_A2 = 4.180165
+
+"""
+    mode_amplitude(mass, E) -> Å
+
+Zero-point displacement amplitude √(ħ²/(2ME)) of a mode of energy `E` (meV) on an atom of mass `mass` (amu):
+the displacement of that atom is `mode_amplitude(M, E) * e_κ(q)` per unit of (c + c†).
+"""
+mode_amplitude(mass::Real, E::Real) = sqrt(HBAR2_AMU_A2 / (2mass * E))
+
+"""
+    ForceConstantBasis(model, atom, groups)
+
+Force constants that enter linearly. `atom` maps each site index to a label; `groups` maps label pairs to a group
+name, e.g. `Dict((:Fe, :F) => :FeF, (:F, :F) => :FF)` (either order). Each group contributes two parameters, its
+longitudinal and transverse stiffness, ordered as `basis.params = [(g, :L), (g, :T), …]`. Then
+
+    D(q) = Σₚ kₚ Dₚ(q),
+
+so ensembles and fits need one weighted sum and one diagonalization per sample and wave vector, and ∂D/∂kₚ = Dₚ.
+Bonds of pairs not listed in `groups` get zero stiffness.
+"""
+struct ForceConstantBasis
+    model::Model
+    params::Vector{Tuple{Symbol,Symbol}}
+    Φ::Vector{Dict{Tuple{Int,Int,SVector{3,Int}},SMatrix{3,3,Float64,9}}}
+end
+
+function ForceConstantBasis(model::Model, atom::Dict{Int,Symbol}, groups::Dict)
+    all(a -> a.β == 0, model.angles) ||
+        throw(ArgumentError("bond-bending (β ≠ 0) terms are not part of the linear basis; build the model with β = 0"))
+    names = sort!(unique(collect(values(groups))))
+    params = [(g, part) for g in names for part in (:L, :T)]
+    Φ = map(params) do (g, part)
+        consts = Dict{Tuple{Symbol,Symbol},Tuple{Float64,Float64}}()
+        for (pair, grp) in groups, key in (pair, reverse(pair))
+            consts[key] = grp === g ? (part === :L ? (1.0, 0.0) : (0.0, 1.0)) : (0.0, 0.0)
+        end
+        for b in model.bonds   # pairs absent from `groups` must not keep stiffness from an earlier assignment
+            key = (atom[b.i], atom[b.j])
+            haskey(consts, key) || (consts[key] = (0.0, 0.0))
+        end
+        assign_force_constants!(model, atom, consts)
+        assemble_force_constants!(model)
+    end
+    return ForceConstantBasis(model, params, Φ)
+end
+
+"""
+    dynamical_matrices(fb::ForceConstantBasis, q_cart) -> Array{ComplexF64,3}
+
+The basis matrices Dₚ(q) (3N × 3N × number of parameters) at a Cartesian wave vector; cache them per wave vector.
+"""
+function dynamical_matrices(fb::ForceConstantBasis, q_cart::SVector{3,Float64})
+    n = 3fb.model.N
+    D = zeros(ComplexF64, n, n, length(fb.Φ))
+    for p in eachindex(fb.Φ)
+        D[:, :, p] .= dynamical_matrix(fb.model, fb.Φ[p], q_cart)
+    end
+    return D
+end
+
+"""
+    dynamical_matrix(fb::ForceConstantBasis, k, q_cart) -> Hermitian
+
+D(q) for the force constants `k` (in the order of `fb.params`, eV/Å²).
+"""
+function dynamical_matrix(fb::ForceConstantBasis, k::AbstractVector, q_cart::SVector{3,Float64})
+    length(k) == length(fb.Φ) || throw(DimensionMismatch("need one force constant per basis parameter"))
+    D = dynamical_matrices(fb, q_cart)
+    return Hermitian(dropdims(sum(D .* reshape(k, 1, 1, :); dims=3); dims=3))
+end
+
+"""
+    phonons(D::AbstractMatrix; signed=true) -> (E, vecs)
+
+Energies (meV, ascending; −√|ω²| for unstable modes unless `signed=false`) and eigenvectors of an assembled
+dynamical matrix, for example `sum(k .* Dₚ)` from cached [`dynamical_matrices`](@ref).
+"""
+function phonons(D::AbstractMatrix; signed::Bool=true)
+    vals, vecs = eigen(Hermitian(Matrix(D)))
+    ω = signed ? sign.(vals) .* sqrt.(abs.(vals)) : sqrt.(max.(vals, 0.0))
+    return ALPHA_meV .* ω, vecs
+end

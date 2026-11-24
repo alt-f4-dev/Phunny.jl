@@ -49,10 +49,11 @@ end
 
 @testset "build_model" begin
 	println()
-	@test mdl.bonds[1].i == 1
-	@test mdl.bonds[1].j == 2
-	@test mdl.bonds[1].r0 ≈ [1.35775, 1.35775, 1.35775]
-	@test mdl.bonds[1].R ≈ [0, 0, 0]
+	# the cutoff (2a) reaches neighbouring cells; the bond inside the home cell is still there
+	b = only(filter(x -> x.i == 1 && x.j == 2 && iszero(x.R), mdl.bonds))
+	@test b.r0 ≈ [1.35775, 1.35775, 1.35775]
+	@test all(x -> norm(x.r0) <= 2a + 1e-9, mdl.bonds)
+	@test any(x -> !iszero(x.R), mdl.bonds)
     @test mdl.lattice ≈ [5.431  0.0    0.0;
 			 0.0    5.431  0.0;
  			 0.0    0.0    5.431]
@@ -62,10 +63,9 @@ end;
 
 @testset "force_constants" begin
 	println()
-	@test Φ.idxfloor == 1
-	@test Φ.count == 4
-	@test Φ.vals.length == 16
-	@test size(Φ.vals[1]) == (3,3)
+	@test all(v -> size(v) == (3,3), values(Φ))
+	@test haskey(Φ, (1, 1, SVector(0, 0, 0))) && haskey(Φ, (1, 2, SVector(0, 0, 0)))
+	@test asr_residual(Φ, mdl.N) < 1e-8                  # translational invariance
 end
 
 @testset "mass_bcoh" begin
@@ -75,6 +75,8 @@ end
 end
 
 phonon_energies, phonon_vecs = phonons(mdl, Φ, @SVector[0.5,0.5,0.5]; q_basis=:cart, q_cell=:primitive)
+
+include(joinpath(@__DIR__, "api_fixes.jl"))
 
 @testset "Phunny Validation Suite" begin
     include(joinpath(@__DIR__, "Validation", "bcoh-test.jl"))
