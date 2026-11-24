@@ -4,7 +4,7 @@ Extension of Sunny.jl to include phonon analysis.
 """
 module Phunny
 
-using LinearAlgebra, SparseArrays, StaticArrays
+using LinearAlgebra, Random, SparseArrays, StaticArrays
 
 #------------#
 # Public API #
@@ -18,6 +18,10 @@ export dynamical_matrix, dynamical_gradient!, dynamical_hessian!
 export phonons, group_velocity, msd_from_phonons, U_from_phonons
 export ForceConstantBasis, dynamical_matrices, mode_amplitude, HBAR2_AMU_A2
 export onephonon_dsf, onephonon_dsf_4d
+export debye_temperature, fit_force_constants, sample_force_constants
+export displacement_representation, gamma_irreps
+export colpa, LocalEnvironment, displacement_gradient, MagneticSite, single_ion_magnetoelastic
+export magnon_phonon_bdg, hybrid_modes, first_order_coupling
 
 export make_physical!, longitudinal_weights!
 export ω_grid, mass_vector, q_cartesian, collapse, mass_lookup, bcoh_lookup, atomic_index
@@ -25,6 +29,9 @@ export ω_grid, mass_vector, q_cartesian, collapse, mass_lookup, bcoh_lookup, at
 include("constants.jl")
 include("helpers.jl")
 include("calculations.jl")
+include("fitting.jl")
+include("symmetry.jl")
+include("magnetoelastic.jl")
 
 #----------------------------#
 # Validation & sanity checks #

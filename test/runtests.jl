@@ -77,6 +77,7 @@ end
 phonon_energies, phonon_vecs = phonons(mdl, Φ, @SVector[0.5,0.5,0.5]; q_basis=:cart, q_cell=:primitive)
 
 include(joinpath(@__DIR__, "api_fixes.jl"))
+include(joinpath(@__DIR__, "magnetoelastic.jl"))
 
 @testset "Phunny Validation Suite" begin
     include(joinpath(@__DIR__, "Validation", "bcoh-test.jl"))

@@ -17,6 +17,7 @@ makedocs(;
         "Home" => "index.md",
         "Tutorials" => "tutorials.md",
         "Conventions"=> "conventions.md",
+        "Fits, symmetry and coupling" => "extensions.md",
         "References" => "refs.md"
     ],
 )

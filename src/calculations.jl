@@ -812,7 +812,7 @@ mode_amplitude(mass::Real, E::Real) = sqrt(HBAR2_AMU_A2 / (2mass * E))
 
 Force constants that enter linearly. Bonds are sorted into groups either by the labels of their atoms
 (`atom` maps each site index to a label; `groups` maps label pairs to a group name, either order, e.g.
-`Dict((:Fe, :F) => :FeF, (:F, :F) => :FF)`) or by a function `group(bond) -> Symbol` (or `nothing` to leave
+`Dict((:A, :B) => :AB, (:B, :B) => :BB)`) or by a function `group(bond) -> Symbol` (or `nothing` to leave
 the bond out), which can tell bonds apart by length. Each group contributes two parameters, its longitudinal
 and transverse stiffness, ordered as `basis.params = [(g, :L), (g, :T), …]`. With `angle_group(angle) -> Symbol`
 (or `nothing`), the bond-bending angles of the model (`build_model(...; shell, tol)`) become parameters `(g, :β)`
@@ -872,8 +872,7 @@ D(q) for the force constants `k` (in the order of `fb.params`, eV/Å²).
 """
 function dynamical_matrix(fb::ForceConstantBasis, k::AbstractVector, q_cart::SVector{3,Float64})
     length(k) == length(fb.Φ) || throw(DimensionMismatch("need one force constant per basis parameter"))
-    D = dynamical_matrices(fb, q_cart)
-    return Hermitian(dropdims(sum(D .* reshape(k, 1, 1, :); dims=3); dims=3))
+    return dynamical_matrix(dynamical_matrices(fb, q_cart), k)
 end
 
 """
