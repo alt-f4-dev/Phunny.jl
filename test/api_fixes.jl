@@ -33,4 +33,11 @@ end
     byd = ForceConstantBasis(mdl, b -> atom[b.i] == atom[b.j] ? (atom[b.i] === :A ? :AA : :BB) : :AB)
     @test byd.params == fb.params && dynamical_matrix(byd, k, q) ≈ dynamical_matrix(fb, k, q)
     @test_throws DimensionMismatch dynamical_matrix(fb, k[1:3], q)
+    # bond-bending terms are linear too
+    mb = build_model(cell; mass=Dict(:A => 10.0, :B => 20.0), cutoff=3.0, use_sunny_radius=false, β=0.7)
+    @test_throws ArgumentError ForceConstantBasis(mb, b -> :all)
+    fa = ForceConstantBasis(mb, b -> :all; angle_group=a -> :bend)
+    @test fa.params[end] == (:bend, :β)
+    assign_force_constants!(mb, atom, Dict((:A, :B) => (1.0, 0.1), (:A, :A) => (1.0, 0.1), (:B, :B) => (1.0, 0.1)))
+    @test dynamical_matrix(fa, [1.0, 0.1, 0.7], q) ≈ dynamical_matrix(mb, assemble_force_constants!(mb), q)
 end

@@ -814,12 +814,14 @@ Force constants that enter linearly. Bonds are sorted into groups either by the 
 (`atom` maps each site index to a label; `groups` maps label pairs to a group name, either order, e.g.
 `Dict((:Fe, :F) => :FeF, (:F, :F) => :FF)`) or by a function `group(bond) -> Symbol` (or `nothing` to leave
 the bond out), which can tell bonds apart by length. Each group contributes two parameters, its longitudinal
-and transverse stiffness, ordered as `basis.params = [(g, :L), (g, :T), …]`. Then
+and transverse stiffness, ordered as `basis.params = [(g, :L), (g, :T), …]`. With `angle_group(angle) -> Symbol`
+(or `nothing`), the bond-bending angles of the model (`build_model(...; shell, tol)`) become parameters `(g, :β)`
+too, after the bond parameters. Then
 
     D(q) = Σₚ kₚ Dₚ(q),
 
 so ensembles and fits need one weighted sum and one diagonalization per sample and wave vector, and ∂D/∂kₚ = Dₚ.
-Bond-bending (β ≠ 0) terms are not linear in these parameters and are refused.
+Without `angle_group`, a model whose angles carry β ≠ 0 is refused (those terms would be in every Dₚ).
 """
 struct ForceConstantBasis
     model::Model
@@ -832,17 +834,19 @@ function ForceConstantBasis(model::Model, atom::Dict{Int,Symbol}, groups::Dict)
     return ForceConstantBasis(model, lookup)
 end
 
-function ForceConstantBasis(model::Model, group::Function)
-    all(a -> a.β == 0, model.angles) ||
-        throw(ArgumentError("bond-bending (β ≠ 0) terms are not part of the linear basis; build the model with β = 0"))
+function ForceConstantBasis(model::Model, group::Function; angle_group=nothing)
+    angle_group === nothing && !all(a -> a.β == 0, model.angles) &&
+        throw(ArgumentError("bond-bending (β ≠ 0) terms need an `angle_group` to become basis parameters"))
     labels = [group(b) for b in model.bonds]
+    alabels = angle_group === nothing ? fill(nothing, length(model.angles)) : [angle_group(a) for a in model.angles]
     names = sort!(unique(filter(!isnothing, labels)))
-    params = [(g, part) for g in names for part in (:L, :T)]
+    anames = sort!(unique(filter(!isnothing, alabels)))
+    params = [[(g, part) for g in names for part in (:L, :T)]; [(g, :β) for g in anames]]
     Φ = map(params) do (g, part)
         bonds = [Bond(b.i, b.j, b.R, b.r0, Float64(l === g && part === :L), Float64(l === g && part === :T))
                  for (b, l) in zip(model.bonds, labels)]
-        assemble_force_constants!(Model(model.lattice, model.fracpos, model.species, model.mass, bonds,
-                                        model.angles, model.N))
+        angles = [Angle(a.i, a.j, a.k, a.Rji, a.Rjk, Float64(l === g && part === :β)) for (a, l) in zip(model.angles, alabels)]
+        assemble_force_constants!(Model(model.lattice, model.fracpos, model.species, model.mass, bonds, angles, model.N))
     end
     return ForceConstantBasis(model, params, Φ)
 end
