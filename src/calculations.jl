@@ -808,15 +808,18 @@ mode_amplitude(mass::Real, E::Real) = sqrt(HBAR2_AMU_A2 / (2mass * E))
 
 """
     ForceConstantBasis(model, atom, groups)
+    ForceConstantBasis(model, group)
 
-Force constants that enter linearly. `atom` maps each site index to a label; `groups` maps label pairs to a group
-name, e.g. `Dict((:Fe, :F) => :FeF, (:F, :F) => :FF)` (either order). Each group contributes two parameters, its
-longitudinal and transverse stiffness, ordered as `basis.params = [(g, :L), (g, :T), …]`. Then
+Force constants that enter linearly. Bonds are sorted into groups either by the labels of their atoms
+(`atom` maps each site index to a label; `groups` maps label pairs to a group name, either order, e.g.
+`Dict((:Fe, :F) => :FeF, (:F, :F) => :FF)`) or by a function `group(bond) -> Symbol` (or `nothing` to leave
+the bond out), which can tell bonds apart by length. Each group contributes two parameters, its longitudinal
+and transverse stiffness, ordered as `basis.params = [(g, :L), (g, :T), …]`. Then
 
     D(q) = Σₚ kₚ Dₚ(q),
 
 so ensembles and fits need one weighted sum and one diagonalization per sample and wave vector, and ∂D/∂kₚ = Dₚ.
-Bonds of pairs not listed in `groups` get zero stiffness.
+Bond-bending (β ≠ 0) terms are not linear in these parameters and are refused.
 """
 struct ForceConstantBasis
     model::Model
@@ -825,21 +828,21 @@ struct ForceConstantBasis
 end
 
 function ForceConstantBasis(model::Model, atom::Dict{Int,Symbol}, groups::Dict)
+    lookup(b) = get(groups, (atom[b.i], atom[b.j]), get(groups, (atom[b.j], atom[b.i]), nothing))
+    return ForceConstantBasis(model, lookup)
+end
+
+function ForceConstantBasis(model::Model, group::Function)
     all(a -> a.β == 0, model.angles) ||
         throw(ArgumentError("bond-bending (β ≠ 0) terms are not part of the linear basis; build the model with β = 0"))
-    names = sort!(unique(collect(values(groups))))
+    labels = [group(b) for b in model.bonds]
+    names = sort!(unique(filter(!isnothing, labels)))
     params = [(g, part) for g in names for part in (:L, :T)]
     Φ = map(params) do (g, part)
-        consts = Dict{Tuple{Symbol,Symbol},Tuple{Float64,Float64}}()
-        for (pair, grp) in groups, key in (pair, reverse(pair))
-            consts[key] = grp === g ? (part === :L ? (1.0, 0.0) : (0.0, 1.0)) : (0.0, 0.0)
-        end
-        for b in model.bonds   # pairs absent from `groups` must not keep stiffness from an earlier assignment
-            key = (atom[b.i], atom[b.j])
-            haskey(consts, key) || (consts[key] = (0.0, 0.0))
-        end
-        assign_force_constants!(model, atom, consts)
-        assemble_force_constants!(model)
+        bonds = [Bond(b.i, b.j, b.R, b.r0, Float64(l === g && part === :L), Float64(l === g && part === :T))
+                 for (b, l) in zip(model.bonds, labels)]
+        assemble_force_constants!(Model(model.lattice, model.fracpos, model.species, model.mass, bonds,
+                                        model.angles, model.N))
     end
     return ForceConstantBasis(model, params, Φ)
 end

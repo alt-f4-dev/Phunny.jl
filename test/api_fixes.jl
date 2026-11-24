@@ -29,4 +29,8 @@ end
     @test minimum(Eu) < 0                                  # an unstable mode is reported, not hidden
     @test minimum(phonons(Matrix(dynamical_matrix(fb, [0.3, 0.05, -1.2, 0.2, 0.4, 0.1], q)); signed=false)[1]) == 0
     @test mode_amplitude(1.0, HBAR2_AMU_A2 / 2) ≈ 1.0
+    # groups by bond length: same matrices as by label pairs when the lengths separate the same bonds
+    byd = ForceConstantBasis(mdl, b -> atom[b.i] == atom[b.j] ? (atom[b.i] === :A ? :AA : :BB) : :AB)
+    @test byd.params == fb.params && dynamical_matrix(byd, k, q) ≈ dynamical_matrix(fb, k, q)
+    @test_throws DimensionMismatch dynamical_matrix(fb, k[1:3], q)
 end
